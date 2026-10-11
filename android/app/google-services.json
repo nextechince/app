@@ -1,22 +1,21 @@
 {
   "project_info": {
-    "project_number": "539789121540",
-    "firebase_url": "https://aurachat-85f54-default-rtdb.firebaseio.com",
-    "project_id": "aurachat-85f54",
-    "storage_bucket": "aurachat-85f54.firebasestorage.app"
+    "project_number": "162763403110",
+    "project_id": "luma-chat-2b103",
+    "storage_bucket": "luma-chat-2b103.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:539789121540:android:96ac597e52dd0a80573d51",
+        "mobilesdk_app_id": "1:162763403110:android:4a6cc9d38b387b663ea2a7",
         "android_client_info": {
-          "package_name": "com.example.aurachat"
+          "package_name": "com.lumachat.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDJV5x8PKgWhHBaavZ6z9rB3DuT3TEFtLA"
+          "current_key": "AIzaSyAZFbGCXrbF0mP3-sHQiKf23lLfd-va5u0"
         }
       ],
       "services": {
