@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../utils/verified_badge.dart';
 import '../../services/cloudinary_service.dart';
 
@@ -40,9 +40,10 @@ class AppLocalizations {
       'help_center': 'Help center, contact us, privacy policy',
       'invite_friends': 'Invite Friends',
       'log_out': 'Log Out',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Select Language',
       'cancel': 'Cancel',
+      'preferences': 'Preferences',
     },
     'es': {
       'settings': 'Configuración',
@@ -64,9 +65,10 @@ class AppLocalizations {
       'help_center': 'Centro de ayuda, contacto, política',
       'invite_friends': 'Invitar Amigos',
       'log_out': 'Cerrar Sesión',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Seleccionar Idioma',
       'cancel': 'Cancelar',
+      'preferences': 'Preferencias',
     },
     'fr': {
       'settings': 'Paramètres',
@@ -88,9 +90,10 @@ class AppLocalizations {
       'help_center': 'Centre aide, contact, politique',
       'invite_friends': 'Inviter des Amis',
       'log_out': 'Déconnexion',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Choisir la Langue',
       'cancel': 'Annuler',
+      'preferences': 'Préférences',
     },
     'ha': {
       'settings': 'Saituna',
@@ -112,9 +115,10 @@ class AppLocalizations {
       'help_center': 'Cibiyar taimako, tuntuɓa, manufofi',
       'invite_friends': 'Gayyato Abokai',
       'log_out': 'Fita',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Zaɓi Harshe',
       'cancel': 'Soke',
+      'preferences': 'Zaɓuɓɓuka',
     },
     'yo': {
       'settings': 'Ètò',
@@ -136,9 +140,10 @@ class AppLocalizations {
       'help_center': 'Ilé ìrànlọ́wọ́, àbọ̀, òfin àṣírí',
       'invite_friends': 'Pè Àwọn Ọ̀rẹ́',
       'log_out': 'Jáde',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Yan Èdè',
       'cancel': 'Fagilé',
+      'preferences': 'Àwọn àṣàyàn',
     },
     'ig': {
       'settings': 'Ntọala',
@@ -160,26 +165,27 @@ class AppLocalizations {
       'help_center': 'Ụlọ enyemaka, kọntaktị, iwu nzuzo',
       'invite_friends': 'Kpọọ Ndị Enyi',
       'log_out': 'Pụọ',
-      'version': 'AURA Chat v1.0.0',
+      'version': 'Luma Chat v1.0.0',
       'select_language': 'Họrọ Asụsụ',
       'cancel': 'Kagbuo',
+      'preferences': 'Mmasị',
     },
   };
 
   static String get(String key) {
     return _translations[currentLanguage]?[key] ??
-           _translations['en']?[key] ??
-           key;
+        _translations['en']?[key] ??
+        key;
   }
 
   static List<Map<String, String>> get supportedLanguages => [
-    {'code': 'en', 'name': 'English'},
-    {'code': 'es', 'name': 'Español'},
-    {'code': 'fr', 'name': 'Français'},
-    {'code': 'ha', 'name': 'Hausa'},
-    {'code': 'yo', 'name': 'Yorùbá'},
-    {'code': 'ig', 'name': 'Igbo'},
-  ];
+        {'code': 'en', 'name': 'English'},
+        {'code': 'es', 'name': 'Español'},
+        {'code': 'fr', 'name': 'Français'},
+        {'code': 'ha', 'name': 'Hausa'},
+        {'code': 'yo', 'name': 'Yorùbá'},
+        {'code': 'ig', 'name': 'Igbo'},
+      ];
 }
 
 class SettingsScreen extends StatefulWidget {
@@ -203,9 +209,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final savedLang = prefs.getString('app_language');
     if (savedLang != null && mounted) {
-      setState(() {
-        AppLocalizations.currentLanguage = savedLang;
-      });
+      setState(() => AppLocalizations.currentLanguage = savedLang);
     }
   }
 
@@ -228,44 +232,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _uploadProfileImage();
   }
 
-  /// UPLOAD TO CLOUDINARY
   Future<void> _uploadProfileImage() async {
     if (_newProfileImage == null) return;
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
       final userId = authProvider.user?.uid ?? authProvider.mockUserId;
       if (userId == null) return;
 
-      // ── DELETE OLD AVATAR FROM CLOUDINARY ──
+      // Delete old avatar
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
           .get();
       final currentAvatarUrl = userDoc.data()?['avatar_url'] as String?;
-      
+
       if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) {
         await CloudinaryService.deleteFile(currentAvatarUrl);
       }
-      // ── END DELETE ──
 
       final fileBytes = await _newProfileImage!.readAsBytes();
       final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-      // ─── Cloudinary Upload ───────────────────────────────────────
       final uri = Uri.parse(
         'https://api.cloudinary.com/v1_1/$_cloudName/image/upload',
       );
 
       final request = http.MultipartRequest('POST', uri)
         ..fields['upload_preset'] = _uploadPreset
-        ..fields['public_id'] = 'aura_profiles/$userId/$fileName'
+        ..fields['public_id'] = 'luma_profiles/$userId/$fileName'
         ..files.add(
-          http.MultipartFile.fromBytes(
-            'file',
-            fileBytes,
-            filename: fileName,
-          ),
+          http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
         );
 
       final response = await request.send();
@@ -273,51 +270,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final jsonData = jsonDecode(responseData);
 
       if (response.statusCode != 200) {
-        throw Exception('Cloudinary error: ${jsonData['error']?['message'] ?? responseData}');
+        throw Exception(
+            'Cloudinary error: ${jsonData['error']?['message'] ?? responseData}');
       }
 
       final publicUrl = jsonData['secure_url'] as String;
-      // ─────────────────────────────────────────────────────────────
 
-      // Save to Firestore
-      final firestore = FirebaseFirestore.instance;
-      await firestore.collection('users').doc(userId).set({
+      await FirebaseFirestore.instance.collection('users').doc(userId).set({
         'avatar_url': publicUrl,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Update local provider
       await authProvider.updateProfile(photoUrl: publicUrl);
 
-      if (mounted) {
-        setState(() => _isUploading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${AppLocalizations.get('avatar')} updated!'),
-            backgroundColor: const Color(0xFF8B5CF6),
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${AppLocalizations.get('avatar')} updated!'),
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() => _isUploading = false);
-        debugPrint('Cloudinary upload error: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to upload: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      debugPrint('Cloudinary upload error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to upload: $e')),
+      );
     }
   }
 
   Future<void> _backupChats() async {
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
       final userId = authProvider.user?.uid ?? authProvider.mockUserId;
       final userEmail = authProvider.user?.email;
-      
+
       if (userId == null) {
         _showBackupError('Not authenticated');
         return;
@@ -325,7 +313,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       if (mounted) setState(() => _isUploading = true);
 
-      // Fetch all user's chats
       final chatsSnapshot = await FirebaseFirestore.instance
           .collection('chats')
           .where('participants', arrayContains: userId)
@@ -349,7 +336,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'id': m.id,
             'sender_id': data['sender_id'],
             'text': data['text'],
-            'timestamp': ts is Timestamp ? ts.toDate().toIso8601String() : null,
+            'timestamp':
+                ts is Timestamp ? ts.toDate().toIso8601String() : null,
             'type': data['type'] ?? 'text',
             'media_url': data['media_url'],
           };
@@ -368,51 +356,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'chats': backupData,
       });
 
-      // Write to temp file
       final tempDir = Directory.systemTemp;
-      final fileName = 'aura_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+      final fileName =
+          'luma_backup_${DateTime.now().millisecondsSinceEpoch}.json';
       final file = File('${tempDir.path}/$fileName');
       await file.writeAsString(jsonString);
 
       if (mounted) setState(() => _isUploading = false);
 
-      // Open email with backup summary + file path
       final emailBody = Uri.encodeComponent(
-        'AURA Chat Backup\n\n'
+        'Luma Chat Backup\n\n'
         'Exported: ${DateTime.now().toIso8601String()}\n'
         'Chats backed up: ${backupData.length}\n\n'
         'Please attach the backup file from:\n${file.path}\n\n'
-        'To restore: Save this email and use the Restore feature in AURA Chat settings.'
+        'To restore: Save this email and use Restore in Luma Chat settings.',
       );
 
-      final emailSubject = Uri.encodeComponent('AURA Chat Backup - ${DateTime.now().toLocal()}');
-      final emailUri = Uri.parse(
-        'mailto:${userEmail ?? ''}?subject=$emailSubject&body=$emailBody'
-      );
+      final emailSubject =
+          Uri.encodeComponent('Luma Chat Backup - ${DateTime.now().toLocal()}');
+      final emailUri =
+          Uri.parse('mailto:${userEmail ?? ''}?subject=$emailSubject&body=$emailBody');
 
       if (await canLaunchUrl(emailUri)) {
         await launchUrl(emailUri);
       } else {
-        // Fallback: show dialog with file path
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1a103c),
-              title: const Text('Backup Ready', style: TextStyle(color: Colors.white)),
-              content: Text(
-                'Chat backup saved locally.\n\nFile: ${file.path}\n\n${backupData.length} chats backed up.\n\nPlease manually email this file to yourself for safekeeping.',
-                style: TextStyle(color: Colors.white.withOpacity(0.7)),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK', style: TextStyle(color: Color(0xFF8B5CF6))),
-                ),
-              ],
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Backup Ready'),
+            content: Text(
+              'Chat backup saved locally.\n\nFile: ${file.path}\n\n'
+              '${backupData.length} chats backed up.\n\n'
+              'Please manually email this file to yourself for safekeeping.',
             ),
-          );
-        }
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
       }
     } catch (e) {
       if (mounted) setState(() => _isUploading = false);
@@ -421,80 +406,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showBackupError(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _showLanguagePicker() {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(2),
+      builder: (_) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              AppLocalizations.get('select_language'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    AppLocalizations.get('select_language'),
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ...AppLocalizations.supportedLanguages.map((lang) {
-              final isSelected = AppLocalizations.currentLanguage == lang['code'];
-              return ListTile(
-                leading: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
+              ...AppLocalizations.supportedLanguages.map((lang) {
+                final isSelected =
+                    AppLocalizations.currentLanguage == lang['code'];
+                return ListTile(
+                  leading: Icon(
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
                     color: isSelected
-                        ? const Color(0xFF8B5CF6).withOpacity(0.3)
-                        : Colors.white.withOpacity(0.05),
-                    shape: BoxShape.circle,
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface.withOpacity(0.4),
                   ),
-                  child: isSelected
-                      ? const Icon(Icons.check, color: Color(0xFF8B5CF6), size: 16)
-                      : null,
-                ),
-                title: Text(
-                  lang['name']!,
-                  style: TextStyle(
-                    color: isSelected ? const Color(0xFF8B5CF6) : Colors.white,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                  title: Text(
+                    lang['name']!,
+                    style: TextStyle(
+                      color: isSelected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
-                ),
-                onTap: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('app_language', lang['code']!);
-                  setState(() {
-                    AppLocalizations.currentLanguage = lang['code']!;
-                  });
-                  Navigator.pop(context);
-                },
-              );
-            }),
-          ],
+                  onTap: () async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setString('app_language', lang['code']!);
+                    if (!mounted) return;
+                    setState(() {
+                      AppLocalizations.currentLanguage = lang['code']!;
+                    });
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
         ),
       ),
     );
@@ -504,28 +494,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: Text(
-          AppLocalizations.get('log_out'),
-          style: const TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          'Are you sure you want to log out?',
-          style: TextStyle(color: Colors.white.withOpacity(0.7)),
-        ),
+        title: Text(AppLocalizations.get('log_out')),
+        content: const Text('Are you sure you want to log out?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              AppLocalizations.get('cancel'),
-              style: TextStyle(color: Colors.white.withOpacity(0.6)),
-            ),
+            child: Text(AppLocalizations.get('cancel')),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: Text(AppLocalizations.get('log_out')),
           ),
         ],
@@ -533,17 +511,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed == true) {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
       await authProvider.signOut();
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-      }
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuraAuthProvider>(context);
+    final theme = Theme.of(context);
+    final authProvider = Provider.of<LumaAuthProvider>(context);
     final username = authProvider.userName ?? 'Unknown';
     final displayName = authProvider.displayName ?? username;
     final email = authProvider.email ?? '';
@@ -556,455 +535,379 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 200,
-            floating: false,
-            pinned: true,
-            elevation: 0,
-            backgroundColor: const Color(0xFF0A0A0F),
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white70),
-              onPressed: () => Navigator.pop(context),
-            ),
-            title: Text(
-              AppLocalizations.get('settings'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            // App bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      AppLocalizations.get('settings'),
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: () {},
+                  ),
+                ],
               ),
             ),
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      const Color(0xFF8B5CF6).withOpacity(0.2),
-                      const Color(0xFF06B6D4).withOpacity(0.1),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 20, right: 20, top: 60),
-                    child: Column(
+
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 96),
+                children: [
+                  // ─── Profile header ───
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            GestureDetector(
-                              onTap: _isUploading ? null : _pickNewProfileImage,
-                              child: Stack(
-                                children: [
-                                  Container(
-                                    width: 70,
-                                    height: 70,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                                          blurRadius: 20,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
-                                    ),
-                                    child: _buildAvatar(avatar, _newProfileImage),
-                                  ),
-                                  Positioned(
-                                    bottom: 0,
-                                    right: 0,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF8B5CF6),
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: const Color(0xFF0A0A0F),
-                                          width: 2,
-                                        ),
-                                      ),
-                                      child: _isUploading
-                                          ? const SizedBox(
-                                              width: 12,
-                                              height: 12,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white,
-                                              ),
-                                            )
-                                          : const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                        GestureDetector(
+                          onTap: _isUploading ? null : _pickNewProfileImage,
+                          child: Stack(
+                            children: [
+                              _buildAvatar(theme, avatar, _newProfileImage),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: theme.scaffoldBackgroundColor,
+                                      width: 2,
                                     ),
                                   ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  VerifiedUsername(
-                                    username: displayName,
-                                    email: email,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    badgeSize: 16,
-                                    spacing: 6,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '@$username',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.5),
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    email,
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.4),
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  if (userVerified)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 4),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF1DA1F2).withOpacity(0.15),
-                                          borderRadius: BorderRadius.circular(12),
-                                          border: Border.all(
-                                            color: const Color(0xFF1DA1F2).withOpacity(0.3),
+                                  child: _isUploading
+                                      ? const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
                                           ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const VerifiedBadge(size: 10, showTooltip: false),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              'Verified',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: const Color(0xFF1DA1F2).withOpacity(0.9),
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.1),
+                                        )
+                                      : const Icon(Icons.camera_alt,
+                                          size: 12, color: Colors.white),
                                 ),
                               ),
-                              child: const Icon(
-                                Icons.qr_code,
-                                color: Color(0xFF8B5CF6),
-                                size: 24,
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      displayName,
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 17,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (userVerified) ...[
+                                    const SizedBox(width: 6),
+                                    const VerifiedBadge(
+                                        size: 14, showTooltip: false),
+                                  ],
+                                ],
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 2),
+                              Text(
+                                '@$username',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.55),
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                email,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.45),
+                                  fontSize: 13,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.qr_code,
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.7)),
+                          onPressed: () {},
                         ),
                       ],
                     ),
                   ),
-                ),
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.all(20),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-                _buildSectionTitle(AppLocalizations.get('account')),
-                _buildSettingTile(
-                  icon: Icons.key_rounded,
-                  iconColor: const Color(0xFF8B5CF6),
-                  title: AppLocalizations.get('account'),
-                  subtitle: AppLocalizations.get('security_change_number'),
-                  onTap: () => Navigator.pushNamed(context, '/account_settings'),
-                ),
-                _buildSettingTile(
-                  icon: Icons.lock_outline,
-                  iconColor: const Color(0xFF06B6D4),
-                  title: AppLocalizations.get('privacy'),
-                  subtitle: AppLocalizations.get('block_contacts'),
-                  onTap: () => Navigator.pushNamed(context, '/privacy_settings'),
-                ),
-                _buildSettingTile(
-                  icon: Icons.face,
-                  iconColor: const Color(0xFFEC4899),
-                  title: AppLocalizations.get('avatar'),
-                  subtitle: AppLocalizations.get('create_edit_photo'),
-                  onTap: _pickNewProfileImage,
-                ),
-                _buildSectionTitle(AppLocalizations.get('preferences')),
-                _buildSettingTile(
-                  icon: Icons.chat_bubble_outline,
-                  iconColor: const Color(0xFF8B5CF6),
-                  title: AppLocalizations.get('chats'),
-                  subtitle: AppLocalizations.get('theme_wallpapers'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Chat settings coming soon'),
-                        backgroundColor: Color(0xFF8B5CF6),
-                      ),
-                    );
-                  },
-                ),
-                _buildSettingTile(
-                  icon: Icons.notifications_none,
-                  iconColor: const Color(0xFF06B6D4),
-                  title: AppLocalizations.get('notifications'),
-                  subtitle: AppLocalizations.get('message_group_call_tones'),
-                  onTap: () => Navigator.pushNamed(context, '/notifications_settings'),
-                ),
-                _buildSettingTile(
-                  icon: Icons.storage,
-                  iconColor: const Color(0xFFF59E0B),
-                  title: AppLocalizations.get('storage_and_data'),
-                  subtitle: AppLocalizations.get('network_usage'),
-                  onTap: () => Navigator.pushNamed(context, '/data_storage'),
-                ),
-                _buildSettingTile(
-                  icon: Icons.language,
-                  iconColor: const Color(0xFF10B981),
-                  title: AppLocalizations.get('app_language'),
-                  subtitle: currentLang['name']!,
-                  onTap: _showLanguagePicker,
-                ),
-                _buildSettingTile(
-                  icon: Icons.backup_outlined,
-                  iconColor: const Color(0xFF10B981),
-                  title: 'Backup Chats',
-                  subtitle: 'Export chat history to email',
-                  onTap: _backupChats,
-                ),
-                _buildSettingTile(
-                  icon: Icons.restore_outlined,
-                  iconColor: const Color(0xFF8B5CF6),
-                  title: 'Restore Chats',
-                  subtitle: 'Import chat history from backup',
-                  onTap: () => Navigator.pushNamed(context, '/restore_chats'),
-                ),
-                _buildSectionTitle(AppLocalizations.get('help')),
-                _buildSettingTile(
-                  icon: Icons.help_outline,
-                  iconColor: const Color(0xFF8B5CF6),
-                  title: AppLocalizations.get('help'),
-                  subtitle: AppLocalizations.get('help_center'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Help center coming soon'),
-                        backgroundColor: Color(0xFF8B5CF6),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                _buildSettingTile(
-                  icon: Icons.people_outline,
-                  iconColor: const Color(0xFF06B6D4),
-                  title: AppLocalizations.get('invite_friends'),
-                  onTap: () => Navigator.pushNamed(context, '/invite_friends'),
-                ),
-                const SizedBox(height: 32),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+
+                  Divider(height: 0.5, color: theme.dividerColor),
+
+                  // ─── Account ───
+                  _sectionTitle(theme, AppLocalizations.get('account')),
+                  _tile(
+                    theme,
+                    icon: Icons.key_outlined,
+                    title: AppLocalizations.get('account'),
+                    subtitle: AppLocalizations.get('security_change_number'),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/account_settings'),
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    leading: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.logout, color: Colors.red, size: 22),
-                    ),
+                  _tile(
+                    theme,
+                    icon: Icons.lock_outline,
+                    title: AppLocalizations.get('privacy'),
+                    subtitle: AppLocalizations.get('block_contacts'),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/privacy_settings'),
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.face_outlined,
+                    title: AppLocalizations.get('avatar'),
+                    subtitle: AppLocalizations.get('create_edit_photo'),
+                    onTap: _pickNewProfileImage,
+                  ),
+
+                  Divider(height: 0.5, color: theme.dividerColor),
+
+                  // ─── Preferences ───
+                  _sectionTitle(theme, AppLocalizations.get('preferences')),
+                  _tile(
+                    theme,
+                    icon: Icons.chat_bubble_outline,
+                    title: AppLocalizations.get('chats'),
+                    subtitle: AppLocalizations.get('theme_wallpapers'),
+                    onTap: () => Navigator.pushNamed(context, '/appearance'),
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.notifications_none,
+                    title: AppLocalizations.get('notifications'),
+                    subtitle:
+                        AppLocalizations.get('message_group_call_tones'),
+                    onTap: () => Navigator.pushNamed(
+                        context, '/notifications_settings'),
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.storage_outlined,
+                    title: AppLocalizations.get('storage_and_data'),
+                    subtitle: AppLocalizations.get('network_usage'),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/data_storage'),
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.language_outlined,
+                    title: AppLocalizations.get('app_language'),
+                    subtitle: currentLang['name']!,
+                    onTap: _showLanguagePicker,
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.backup_outlined,
+                    title: 'Backup Chats',
+                    subtitle: 'Export chat history to email',
+                    onTap: _backupChats,
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.restore_outlined,
+                    title: 'Restore Chats',
+                    subtitle: 'Import chat history from backup',
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/restore_chats'),
+                  ),
+
+                  Divider(height: 0.5, color: theme.dividerColor),
+
+                  // ─── Help ───
+                  _sectionTitle(theme, AppLocalizations.get('help')),
+                  _tile(
+                    theme,
+                    icon: Icons.help_outline,
+                    title: AppLocalizations.get('help'),
+                    subtitle: AppLocalizations.get('help_center'),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Help center coming soon')),
+                      );
+                    },
+                  ),
+                  _tile(
+                    theme,
+                    icon: Icons.people_outline,
+                    title: AppLocalizations.get('invite_friends'),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/invite_friends'),
+                  ),
+
+                  Divider(height: 0.5, color: theme.dividerColor),
+
+                  // ─── Log out ───
+                  ListTile(
+                    leading: Icon(Icons.logout,
+                        color: theme.colorScheme.error),
                     title: Text(
                       AppLocalizations.get('log_out'),
-                      style: const TextStyle(
-                        color: Colors.red,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                      style: TextStyle(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 15,
                       ),
                     ),
                     onTap: _logOut,
                   ),
-                ),
-                const SizedBox(height: 24),
-                Center(
-                  child: Text(
-                    AppLocalizations.get('version'),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.2),
-                      fontSize: 12,
+
+                  const SizedBox(height: 32),
+
+                  Center(
+                    child: Text(
+                      AppLocalizations.get('version'),
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface.withOpacity(0.3),
+                        fontSize: 12,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-              ]),
+
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildAvatar(String? avatarUrl, File? localFile) {
+  // ─── Helpers ───
+
+  Widget _buildAvatar(ThemeData theme, String? avatarUrl, File? localFile) {
+    const size = 72.0;
+
     if (localFile != null) {
       return ClipOval(
-        child: Image.file(
-          localFile,
-          width: 70,
-          height: 70,
-          fit: BoxFit.cover,
-        ),
+        child: Image.file(localFile, width: size, height: size, fit: BoxFit.cover),
       );
     }
 
     if (avatarUrl == null || avatarUrl.isEmpty) {
       return Container(
-        decoration: const BoxDecoration(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-          ),
+          color: theme.colorScheme.primary.withOpacity(0.15),
         ),
-        child: const Center(
-          child: Icon(Icons.person, color: Colors.white70, size: 32),
-        ),
+        child: Icon(Icons.person,
+            color: theme.colorScheme.primary, size: 34),
       );
     }
 
     return ClipOval(
       child: Image.network(
         avatarUrl,
-        width: 70,
-        height: 70,
+        width: size,
+        height: size,
         fit: BoxFit.cover,
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
           return Container(
-            color: const Color(0xFF1a103c),
+            width: size,
+            height: size,
+            color: theme.colorScheme.primary.withOpacity(0.15),
             child: const Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(Color(0xFF8B5CF6)),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
           );
         },
-        errorBuilder: (context, error, stackTrace) {
-          debugPrint('Settings avatar error: $error');
-          return Container(
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-              ),
-            ),
-            child: const Center(
-              child: Icon(Icons.person, color: Colors.white70, size: 32),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 24, bottom: 12, left: 4),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: const Color(0xFF8B5CF6).withOpacity(0.8),
-          letterSpacing: 1.5,
+        errorBuilder: (_, __, ___) => Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: theme.colorScheme.primary.withOpacity(0.15),
+          ),
+          child: Icon(Icons.person,
+              color: theme.colorScheme.primary, size: 34),
         ),
       ),
     );
   }
 
-  Widget _buildSettingTile({
+  Widget _sectionTitle(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title.toUpperCase(),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(
+    ThemeData theme, {
     required IconData icon,
-    required Color iconColor,
     required String title,
     String? subtitle,
     required VoidCallback onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
+    return ListTile(
+      leading: Icon(icon,
+          color: theme.colorScheme.onSurface.withOpacity(0.75)),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: iconColor, size: 22),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        subtitle: subtitle != null
-            ? Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.4),
-                    fontSize: 13,
-                  ),
+      subtitle: subtitle != null
+          ? Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
                 ),
-              )
-            : null,
-        trailing: Icon(
-          Icons.chevron_right,
-          color: Colors.white.withOpacity(0.15),
-          size: 20,
-        ),
-        onTap: onTap,
+              ),
+            )
+          : null,
+      trailing: Icon(
+        Icons.chevron_right,
+        color: theme.colorScheme.onSurface.withOpacity(0.35),
+        size: 20,
       ),
+      onTap: onTap,
     );
   }
 }
