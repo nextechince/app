@@ -62,8 +62,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
     try {
       final acs = ActionCodeSettings(
-        url: 'https://lumachat.firebaseapp.com/__/auth/action'
-            '?email=${Uri.encodeComponent(email)}',
+        url: 'https://lumachat.firebaseapp.com',
         handleCodeInApp: true,
         androidPackageName: 'com.lumachat.app',
         androidInstallApp: true,
