@@ -444,6 +444,7 @@ class _StatusScreenState extends State<StatusScreen> {
     final isMine = status['is_mine'] == true;
     final viewCount = status['view_count'] ?? 0;
     final likes = status['likes'] ?? [];
+    final gradientIndex = status['gradient_index'] ?? 0;
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -528,7 +529,11 @@ class _StatusScreenState extends State<StatusScreen> {
                     height: 50,
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withOpacity(0.15),
+                      gradient: LinearGradient(
+                        colors: _gradientFor(gradientIndex),
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Center(
@@ -536,8 +541,8 @@ class _StatusScreenState extends State<StatusScreen> {
                         caption.length > 20
                             ? '${caption.substring(0, 20)}...'
                             : caption,
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
+                        style: const TextStyle(
+                          color: Colors.white,
                           fontSize: 10,
                           fontWeight: FontWeight.w500,
                         ),
@@ -568,6 +573,18 @@ class _StatusScreenState extends State<StatusScreen> {
         ),
       ),
     );
+  }
+
+  // ─── Gradient helper — matches CreateStatusScreen ───
+  List<Color> _gradientFor(int i) {
+    const gradients = [
+      [Color(0xFF3390EC), Color(0xFF2B7CD3)],
+      [Color(0xFFE0954A), Color(0xFFC97A2F)],
+      [Color(0xFF8B7BB8), Color(0xFF6E5FA0)],
+      [Color(0xFF4FAE4F), Color(0xFF3D8B3D)],
+      [Color(0xFFE53935), Color(0xFFC62828)],
+    ];
+    return gradients[i.clamp(0, gradients.length - 1)];
   }
 
   String _getTimeAgo(DateTime dateTime) {
@@ -692,7 +709,7 @@ class _StatusScreenState extends State<StatusScreen> {
 }
 
 // ============================================================================
-// STATUS VIEWER SCREEN (keeps pure black — Telegram does this too)
+// STATUS VIEWER SCREEN — pure black, gradient-aware
 // ============================================================================
 class StatusViewerScreen extends StatefulWidget {
   final Map<String, dynamic> status;
@@ -709,6 +726,15 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
   VideoPlayerController? _videoController;
   bool _isVideoReady = false;
   bool _isLiked = false;
+
+  // Same palette as CreateStatusScreen — must stay in sync
+  static const List<List<Color>> _textGradients = [
+    [Color(0xFF3390EC), Color(0xFF2B7CD3)],
+    [Color(0xFFE0954A), Color(0xFFC97A2F)],
+    [Color(0xFF8B7BB8), Color(0xFF6E5FA0)],
+    [Color(0xFF4FAE4F), Color(0xFF3D8B3D)],
+    [Color(0xFFE53935), Color(0xFFC62828)],
+  ];
 
   @override
   void initState() {
@@ -931,6 +957,7 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
     final type = status['type'] ?? 'image';
     final viewCount = status['view_count'] ?? 0;
     final likes = status['likes'] ?? [];
+    final gradientIndex = status['gradient_index'] ?? 0;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -944,8 +971,14 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
               child: type == 'text'
                   ? Container(
                       padding: const EdgeInsets.all(32),
+                      margin: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF3390EC),
+                        gradient: LinearGradient(
+                          colors: _textGradients[gradientIndex
+                              .clamp(0, _textGradients.length - 1)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -954,6 +987,7 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
                           color: Colors.white,
                           fontSize: 26,
                           fontWeight: FontWeight.w600,
+                          height: 1.3,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -983,6 +1017,7 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
                         backgroundColor: Colors.white.withOpacity(0.2),
                         valueColor:
                             const AlwaysStoppedAnimation(Colors.white),
+                        minHeight: 2.5,
                       );
                     },
                   ),
