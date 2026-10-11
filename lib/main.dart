@@ -67,37 +67,45 @@ import 'services/call_signaling_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // BACKGROUND FCM HANDLER
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    return;
+  }
 
   final data = message.data;
   final type = data['type'] as String?;
 
   if (type == 'call') {
-    final callService = CallNotificationService();
-    await callService.initialize();
+    try {
+      final callService = CallNotificationService();
+      await callService.initialize();
 
-    final signal = CallSignal(
-      type: CallSignalType.incoming,
-      callId: data['call_id'],
-      callerId: data['caller_id'],
-      callerName: data['caller_name'],
-      callerAvatar: data['caller_avatar'],
-      channelName: data['channel_name'],
-      isVideoCall: data['is_video_call'] == 'true',
-    );
+      final signal = CallSignal(
+        type: CallSignalType.incoming,
+        callId: data['call_id'],
+        callerId: data['caller_id'],
+        callerName: data['caller_name'],
+        callerAvatar: data['caller_avatar'],
+        channelName: data['channel_name'],
+        isVideoCall: data['is_video_call'] == 'true',
+      );
 
-    await callService.showIncomingCallNotification(signal);
+      await callService.showIncomingCallNotification(signal);
+    } catch (e) {
+      debugPrint('Background FCM handler error: $e');
+    }
   }
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
+// MAIN — crash-proof + offline-friendly
+// ═════════════════════════════════════════════════════════════════════════════
 void main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
@@ -108,21 +116,62 @@ void main() async {
 
   try {
     WidgetsFlutterBinding.ensureInitialized();
-    await Firebase.initializeApp();
 
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    // ── Firebase init (required, but graceful if offline) ──
+    try {
+      await Firebase.initializeApp();
+    } catch (e) {
+      debugPrint('⚠️ Firebase init failed: $e');
+      // If Firebase fails completely, we still want to try running the app
+      // so the error screen shows instead of a black screen.
+    }
 
-    await NotificationService.init();
-    await NotificationService.requestPermission();
+    // ── FCM background handler (non-fatal) ──
+    try {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    } catch (e) {
+      debugPrint('⚠️ FCM background handler failed: $e');
+    }
 
-    await CallNotificationService().initialize();
+    // ── Local notifications (non-fatal) ──
+    try {
+      await NotificationService.init();
+      await NotificationService.requestPermission();
+    } catch (e) {
+      debugPrint('⚠️ NotificationService failed (non-fatal): $e');
+    }
 
-    final pushService = PushNotificationService();
-    await pushService.initialize();
+    // ── Call notifications (non-fatal) ──
+    try {
+      await CallNotificationService().initialize();
+    } catch (e) {
+      debugPrint('⚠️ CallNotificationService failed (non-fatal): $e');
+    }
 
-    ConnectivityService().initialize();
-    CallService.initialize('8a2cea909f994b0d9e61146e99710277');
+    // ── FCM push token (non-fatal — fails on bad Play Services) ──
+    try {
+      final pushService = PushNotificationService();
+      await pushService.initialize();
+      debugPrint('✅ Push notifications initialized');
+    } catch (e) {
+      debugPrint('⚠️ PushNotificationService failed (non-fatal): $e');
+    }
 
+    // ── Connectivity monitor (non-fatal) ──
+    try {
+      ConnectivityService().initialize();
+    } catch (e) {
+      debugPrint('⚠️ ConnectivityService failed (non-fatal): $e');
+    }
+
+    // ── Agora call service (non-fatal) ──
+    try {
+      CallService.initialize('8a2cea909f994b0d9e61146e99710277');
+    } catch (e) {
+      debugPrint('⚠️ CallService failed (non-fatal): $e');
+    }
+
+    // ── Portrait lock ──
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -138,9 +187,9 @@ void main() async {
   runApp(ErrorApp(error: startupError ?? 'Unknown error', stack: startupStack));
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // ERROR APP
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class ErrorApp extends StatelessWidget {
   final String error;
   final String? stack;
@@ -240,9 +289,9 @@ class ErrorApp extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// AUTH ROUTER — phone-first
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
+// AUTH ROUTER — phone-first, offline-aware
+// ═════════════════════════════════════════════════════════════════════════════
 class AuthRouter extends StatefulWidget {
   const AuthRouter({super.key});
 
@@ -269,48 +318,64 @@ class _AuthRouterState extends State<AuthRouter> {
   Future<void> _checkAuthState() async {
     final prefs = await SharedPreferences.getInstance();
 
+    // ── 1. Firebase user (magic link verified) ──
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) {
+      // Try Firestore check for profile completeness — but fall back to
+      // cached prefs if offline.
+      bool complete = false;
       try {
         final userDoc = await FirebaseFirestore.instance
             .collection('users')
             .doc(currentUser.uid)
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 4));
+
         final data = userDoc.data();
         final hasUsername =
             (data?['username'] as String?)?.trim().isNotEmpty ?? false;
         final hasDisplayName =
             (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
-        final complete = userDoc.exists && hasUsername && hasDisplayName;
-
-        setState(() {
-          _targetScreen =
-              complete ? const MainAppScreen() : const SetupProfileScreen();
-          _isChecking = false;
-        });
+        complete = userDoc.exists && hasUsername && hasDisplayName;
       } catch (_) {
-        setState(() {
-          _targetScreen = const SetupProfileScreen();
-          _isChecking = false;
-        });
+        // Offline or timeout — check cached prefs
+        final cachedUsername = prefs.getString('mock_username');
+        final cachedName = prefs.getString('mock_display_name');
+        complete = (cachedUsername?.isNotEmpty ?? false) &&
+            (cachedName?.isNotEmpty ?? false);
       }
+
+      setState(() {
+        _targetScreen =
+            complete ? const MainAppScreen() : const SetupProfileScreen();
+        _isChecking = false;
+      });
       return;
     }
 
+    // ── 2. Cached login (offline-friendly) ──
+    final cachedUserId = prefs.getString('mock_user_id');
+    if (cachedUserId != null && cachedUserId.isNotEmpty) {
+      final cachedUsername = prefs.getString('mock_username');
+      final cachedName = prefs.getString('mock_display_name');
+      final hasProfile = (cachedUsername?.isNotEmpty ?? false) &&
+          (cachedName?.isNotEmpty ?? false);
+
+      setState(() {
+        _targetScreen =
+            hasProfile ? const MainAppScreen() : const SetupProfileScreen();
+        _isChecking = false;
+      });
+      return;
+    }
+
+    // ── 3. No user — check pending flow ──
     final pendingPhone = prefs.getString('pending_phone');
     final pendingEmail = prefs.getString('pending_email');
 
     if (pendingPhone == null) {
       setState(() {
         _targetScreen = const PhoneEntryScreen();
-        _isChecking = false;
-      });
-      return;
-    }
-
-    if (pendingEmail == null || pendingEmail.isEmpty) {
-      setState(() {
-        _targetScreen = const EmailVerificationScreen();
         _isChecking = false;
       });
       return;
@@ -340,9 +405,9 @@ class _AuthRouterState extends State<AuthRouter> {
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // CALL LISTENER
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class CallListener extends StatefulWidget {
   final Widget child;
   const CallListener({super.key, required this.child});
@@ -362,7 +427,8 @@ class _CallListenerState extends State<CallListener> {
 
   void _setupCallListening() {
     try {
-      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
       final userId = authProvider.currentUserId;
       if (userId == null) return;
 
@@ -402,9 +468,9 @@ class _CallListenerState extends State<CallListener> {
   Widget build(BuildContext context) => widget.child;
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // APP ROOT
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class LumaChatApp extends StatefulWidget {
   const LumaChatApp({super.key});
 
@@ -419,25 +485,39 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final authProvider =
-          Provider.of<LumaAuthProvider>(context, listen: false);
-      authProvider.listenToAuthChanges();
+      try {
+        final authProvider =
+            Provider.of<LumaAuthProvider>(context, listen: false);
+        authProvider.listenToAuthChanges();
+      } catch (e) {
+        debugPrint('Auth listener error: $e');
+      }
 
-      final settingsProvider =
-          Provider.of<SettingsProvider>(context, listen: false);
-      settingsProvider.startForegroundTimer();
+      try {
+        final settingsProvider =
+            Provider.of<SettingsProvider>(context, listen: false);
+        settingsProvider.startForegroundTimer();
+      } catch (e) {
+        debugPrint('Settings timer error: $e');
+      }
 
-      PushNotificationService().onChatOpen = (chatId) {
-        navigatorKey.currentState
-            ?.pushNamed('/chat', arguments: {'chatId': chatId});
-      };
+      try {
+        PushNotificationService().onChatOpen = (chatId) {
+          navigatorKey.currentState
+              ?.pushNamed('/chat', arguments: {'chatId': chatId});
+        };
+      } catch (e) {
+        debugPrint('Push onChatOpen error: $e');
+      }
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    CallSignalingService.dispose();
+    try {
+      CallSignalingService.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -564,9 +644,9 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // APP LOCK WRAPPER
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class _AppLockWrapper extends StatefulWidget {
   final Widget child;
   const _AppLockWrapper({required this.child});
@@ -590,24 +670,25 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
 
     if (userId == null) return app;
 
+    // Ban check — wraps in try/catch so offline doesn't break the app
     return StreamBuilder<DocumentSnapshot>(
-      stream:
-          FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Scaffold(
-            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-            body: Center(
-              child: CircularProgressIndicator(
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          );
+        // If we're offline or snapshot errored → just show the app
+        if (snapshot.hasError) return app;
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return app;
         }
 
         final userData = snapshot.data?.data() as Map<String, dynamic>?;
-        final isBanned = userData?['is_banned'] == true;
-        final bannedUntil = userData?['banned_until'] as Timestamp?;
+        if (userData == null) return app;
+
+        final isBanned = userData['is_banned'] == true;
+        final bannedUntil = userData['banned_until'] as Timestamp?;
 
         if (isBanned && bannedUntil != null) {
           final banExpiry = bannedUntil.toDate();
@@ -621,7 +702,7 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
               'ban_reason': null,
               'ban_report_id': null,
               'ban_level': null,
-            });
+            }).catchError((_) {});
             return app;
           }
         }
@@ -630,9 +711,9 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
           final banStatus = {
             'is_banned': true,
             'banned_until': bannedUntil?.toDate(),
-            'ban_reason': userData?['ban_reason'],
-            'ban_level': userData?['ban_level'],
-            'ban_report_id': userData?['ban_report_id'],
+            'ban_reason': userData['ban_reason'],
+            'ban_level': userData['ban_level'],
+            'ban_report_id': userData['ban_report_id'],
           };
           return BannedScreen(banStatus: banStatus);
         }
@@ -643,9 +724,9 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // LOCK SCREEN
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class LockScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
   const LockScreen({super.key, required this.onUnlocked});
@@ -668,7 +749,8 @@ class _LockScreenState extends State<LockScreen> {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
 
-    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
 
     if (settingsProvider.biometricLock) {
       final localAuth = LocalAuthentication();
@@ -751,19 +833,29 @@ class _LockScreenState extends State<LockScreen> {
           decoration: BoxDecoration(
             color: theme.colorScheme.primary.withOpacity(0.15),
             shape: BoxShape.circle,
-            border: Border.all(color: theme.colorScheme.primary.withOpacity(0.3)),
+            border: Border.all(
+              color: theme.colorScheme.primary.withOpacity(0.3),
+            ),
           ),
-          child: Icon(Icons.lock_outline,
-              size: 48, color: theme.colorScheme.primary),
+          child: Icon(
+            Icons.lock_outline,
+            size: 48,
+            color: theme.colorScheme.primary,
+          ),
         ),
         const SizedBox(height: 32),
-        Text('Luma is Locked',
-            style: theme.textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.bold)),
+        Text(
+          'Luma is Locked',
+          style: theme.textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 12),
-        Text('Authentication required to continue',
-            style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.5))),
+        Text(
+          'Authentication required to continue',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurface.withOpacity(0.5),
+          ),
+        ),
         const SizedBox(height: 48),
         GestureDetector(
           onTap: () {
@@ -780,11 +872,14 @@ class _LockScreenState extends State<LockScreen> {
               color: theme.colorScheme.primary,
               borderRadius: BorderRadius.circular(30),
             ),
-            child: const Text('Enter Passcode',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white)),
+            child: const Text(
+              'Enter Passcode',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ],
@@ -792,9 +887,9 @@ class _LockScreenState extends State<LockScreen> {
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // PASSCODE ENTRY
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class _PasscodeEntry extends StatefulWidget {
   final String correctPasscode;
   final VoidCallback onUnlocked;
@@ -857,20 +952,29 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
             decoration: BoxDecoration(
               color: theme.colorScheme.primary.withOpacity(0.15),
               shape: BoxShape.circle,
-              border:
-                  Border.all(color: theme.colorScheme.primary.withOpacity(0.3)),
+              border: Border.all(
+                color: theme.colorScheme.primary.withOpacity(0.3),
+              ),
             ),
-            child: Icon(Icons.pin_outlined,
-                size: 32, color: theme.colorScheme.primary),
+            child: Icon(
+              Icons.pin_outlined,
+              size: 32,
+              color: theme.colorScheme.primary,
+            ),
           ),
           const SizedBox(height: 24),
-          Text('Enter Passcode',
-              style: theme.textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold)),
+          Text(
+            'Enter Passcode',
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
-          Text('Enter your 6-digit PIN to unlock',
-              style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.4))),
+          Text(
+            'Enter your 6-digit PIN to unlock',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.4),
+            ),
+          ),
           const SizedBox(height: 32),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -890,8 +994,10 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
           ),
           if (_error.isNotEmpty) ...[
             const SizedBox(height: 16),
-            Text(_error,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 14)),
+            Text(
+              _error,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+            ),
           ],
           const SizedBox(height: 40),
           SizedBox(
@@ -927,8 +1033,10 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
     try {
       final ok = await localAuth.authenticate(
         localizedReason: 'Unlock Luma Chat',
-        options:
-            const AuthenticationOptions(biometricOnly: false, stickyAuth: true),
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
       );
       if (ok && mounted) widget.onUnlocked();
     } catch (e) {
@@ -949,9 +1057,11 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
           border: Border.all(color: theme.dividerColor),
         ),
         child: Center(
-          child: Text(d,
-              style: theme.textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w500)),
+          child: Text(
+            d,
+            style: theme.textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w500),
+          ),
         ),
       ),
     );
@@ -970,17 +1080,20 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
           border: Border.all(color: theme.dividerColor),
         ),
         child: Center(
-          child: Icon(icon,
-              color: theme.colorScheme.onSurface.withOpacity(0.6), size: 24),
+          child: Icon(
+            icon,
+            color: theme.colorScheme.onSurface.withOpacity(0.6),
+            size: 24,
+          ),
         ),
       ),
     );
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // OFFLINE BANNER — single-value connectivity API
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class OfflineBanner extends StatefulWidget {
   const OfflineBanner({super.key});
 
@@ -1003,9 +1116,11 @@ class _OfflineBannerState extends State<OfflineBanner> {
   }
 
   Future<void> _check() async {
-    final result = await Connectivity().checkConnectivity();
-    if (!mounted) return;
-    setState(() => _offline = result == ConnectivityResult.none);
+    try {
+      final result = await Connectivity().checkConnectivity();
+      if (!mounted) return;
+      setState(() => _offline = result == ConnectivityResult.none);
+    } catch (_) {}
   }
 
   @override
@@ -1043,9 +1158,9 @@ class _OfflineBannerState extends State<OfflineBanner> {
   }
 }
 
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 // CONNECTIVITY SERVICE — single-value API
-// ============================================================================
+// ═════════════════════════════════════════════════════════════════════════════
 class ConnectivityService {
   static final ConnectivityService _i = ConnectivityService._();
   factory ConnectivityService() => _i;
@@ -1063,13 +1178,19 @@ class ConnectivityService {
   }
 
   Future<void> _checkNow() async {
-    final result = await Connectivity().checkConnectivity();
-    isOnline.value = result != ConnectivityResult.none;
+    try {
+      final result = await Connectivity().checkConnectivity();
+      isOnline.value = result != ConnectivityResult.none;
+    } catch (_) {}
   }
 
   Future<bool> checkOnline() async {
-    final result = await Connectivity().checkConnectivity();
-    return result != ConnectivityResult.none;
+    try {
+      final result = await Connectivity().checkConnectivity();
+      return result != ConnectivityResult.none;
+    } catch (_) {
+      return true; // assume online on error
+    }
   }
 
   void dispose() {
