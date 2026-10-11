@@ -34,7 +34,7 @@ jobs:
           cp android/app/google-services.json /tmp/google-services.json
           rm -rf android
           # --org com.lumachat + --project-name app → generates package com.lumachat.app
-          flutter create . --platforms=android --org com.lumachat --project-name aurachat
+          flutter create . --platforms=android --org com.lumachat --project-name app
           mkdir -p android/app
           cp /tmp/google-services.json android/app/
           ls -la android/app/google-services.json
