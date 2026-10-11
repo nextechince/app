@@ -65,10 +65,10 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
         url: 'https://lumachat.firebaseapp.com/__/auth/action'
             '?email=${Uri.encodeComponent(email)}',
         handleCodeInApp: true,
-        androidPackageName: 'com.example.aurachat',
+        androidPackageName: 'com.lumachat.app',
         androidInstallApp: true,
         androidMinimumVersion: '1',
-        iOSBundleId: 'com.example.aurachat',
+        iOSBundleId: 'com.lumachat.app',
       );
 
       await FirebaseAuth.instance.sendSignInLinkToEmail(
@@ -229,8 +229,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 const SizedBox(height: 8),
                 Text(
                   _linkSent
-                      ? 'We sent a magic link to $_sentEmail. Tap it on this device.'
-                      : "We'll send you a link to sign in. No password needed.",
+                      ? 'We sent a verification link to $_sentEmail. Tap it on this device.'
+                      : "We'll send you a verification link",
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface.withOpacity(0.6),
                     height: 1.4,
@@ -281,7 +281,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Magic link sent',
+                                'Verification link sent',
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w600,
                                   color: theme.colorScheme.onSurface,
@@ -289,7 +289,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Tap the link in the email. This screen detects it automatically.',
+                                'Tap the link in the email. Will be detected automatically.',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurface
                                       .withOpacity(0.6),
@@ -353,7 +353,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                         : Text(
                             _linkSent
                                 ? "I've tapped the link"
-                                : 'Send magic link',
+                                : 'Send verification link',
                           ),
                   ),
                 ),
