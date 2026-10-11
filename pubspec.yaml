@@ -70,7 +70,7 @@ dependencies:
 
   # Notifications
   flutter_local_notifications: ^17.0.0
-
+  flutter_contacts: ^1.1.9+2
   # Connectivity
   connectivity_plus: ^5.0.0
 
