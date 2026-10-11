@@ -73,7 +73,7 @@ dependencies:
   flutter_contacts: ^1.1.9+2
   # Connectivity
   connectivity_plus: ^5.0.0
-
+  emailjs: ^3.0.0
   # NEW: Audio player for ringtone preview
   # audioplayers: ^6.0.0
 
