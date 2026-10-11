@@ -323,7 +323,16 @@ jobs:
       - name: Create asset directories
         run: |
           mkdir -p assets/images assets/emojis assets/audio
-
+      - name: Create EmailJS config
+        run: |
+         cat > lib/services/emailjs_config.dart << 'EOF'
+          class EmailJSConfig {
+            static const String serviceId = '${{ secrets.EMAILJS_SERVICE_ID }}';
+             static const String templateId = '${{ secrets.EMAILJS_TEMPLATE_ID }}';
+              static const String publicKey = '${{ secrets.EMAILJS_PUBLIC_KEY }}';
+               }
+               EOF
+               
       - name: Get dependencies
         run: flutter pub get
 
