@@ -33,10 +33,34 @@ jobs:
         run: |
           cp android/app/google-services.json /tmp/google-services.json
           rm -rf android
-          flutter create . --platforms=android --org com.example
+          flutter create . --platforms=android --org com.lumachat --project-name aurachat
           mkdir -p android/app
           cp /tmp/google-services.json android/app/
           ls -la android/app/google-services.json
+
+      - name: Rename package to com.lumachat.app
+        run: |
+          # The default package after `flutter create --org com.lumachat` is
+          # com.lumachat.aurachat. We want com.lumachat.app, so we must:
+          # 1. Move Kotlin sources
+          # 2. Update the Kotlin package declaration
+          # 3. Update namespace + applicationId in build.gradle
+          # 4. Update AndroidManifest's exported activity name
+
+          OLD=com/lumachat/aurachat
+          NEW=com/lumachat/app
+
+          mkdir -p android/app/src/main/kotlin/$NEW
+          if [ -d "android/app/src/main/kotlin/$OLD" ]; then
+            mv android/app/src/main/kotlin/$OLD/* android/app/src/main/kotlin/$NEW/ 2>/dev/null || true
+            rmdir -p android/app/src/main/kotlin/$OLD 2>/dev/null || true
+          fi
+
+          # Fix package declaration in MainActivity.kt
+          if [ -f "android/app/src/main/kotlin/$NEW/MainActivity.kt" ]; then
+            sed -i 's/package com\.lumachat\.aurachat/package com.lumachat.app/' \
+              android/app/src/main/kotlin/$NEW/MainActivity.kt
+          fi
 
       - name: Fix settings.gradle
         run: |
@@ -128,7 +152,29 @@ jobs:
           with open('android/app/build.gradle', 'r') as f:
               content = f.read()
 
-          # Pin compileSdk and targetSdk to 34
+          # Rename namespace + applicationId
+          content = re.sub(
+              r'namespace\s+"com\.lumachat\.aurachat"',
+              'namespace "com.lumachat.app"',
+              content
+          )
+          content = re.sub(
+              r'applicationId\s+"com\.lumachat\.aurachat"',
+              'applicationId "com.lumachat.app"',
+              content
+          )
+          content = re.sub(
+              r'applicationId\s+"com\.example\.aurachat"',
+              'applicationId "com.lumachat.app"',
+              content
+          )
+          content = re.sub(
+              r'namespace\s+"com\.example\.aurachat"',
+              'namespace "com.lumachat.app"',
+              content
+          )
+
+          # Pin compileSdk / targetSdk
           content = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion', 'compileSdk = 34', content)
           content = re.sub(r'compileSdkVersion\s+.*', 'compileSdkVersion 34', content)
           content = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion', 'targetSdk = 34', content)
@@ -136,9 +182,6 @@ jobs:
 
           # Lower minSdk
           content = content.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
-
-          # NOTE: ndk abiFilters intentionally REMOVED here — it conflicts
-          # with --split-per-abi which is what we use to build.
 
           # Firebase plugin
           if 'com.google.gms.google-services' not in content:
@@ -188,12 +231,11 @@ jobs:
           -keep class retrofit2.** { *; }
           -dontwarn retrofit2.**
 
-          # Prevent stripping of JSON models
+          # JSON models
           -keepclassmembers class * {
               @com.google.gson.annotations.SerializedName <fields>;
           }
 
-          # Keep stack traces readable
           -keepattributes SourceFile,LineNumberTable
           -renamesourcefileattribute SourceFile
           EOF
@@ -216,6 +258,7 @@ jobs:
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
               <uses-permission android:name="android.permission.VIBRATE" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.READ_CONTACTS" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                   android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -289,9 +332,10 @@ jobs:
 
       - name: Setup MainActivity
         run: |
-          mkdir -p android/app/src/main/kotlin/com/example/aurachat
-          cat > android/app/src/main/kotlin/com/example/aurachat/MainActivity.kt << 'EOF'
-          package com.example.aurachat
+          # Rewrite in the new correct path
+          mkdir -p android/app/src/main/kotlin/com/lumachat/app
+          cat > android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt << 'EOF'
+          package com.lumachat.app
           import io.flutter.embedding.android.FlutterFragmentActivity
           class MainActivity: FlutterFragmentActivity() {}
           EOF
