@@ -1,8 +1,12 @@
-import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:emailjs/emailjs.dart' as emailjs;
+
+import '../../services/emailjs_config.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
   const EmailVerificationScreen({super.key});
@@ -14,11 +18,17 @@ class EmailVerificationScreen extends StatefulWidget {
 
 class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   final _emailController = TextEditingController();
+  final List<TextEditingController> _codeControllers =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _focusNodes =
+      List.generate(6, (_) => FocusNode());
 
   bool _isLoading = false;
   String? _error;
-  bool _linkSent = false;
+  bool _codeSent = false;
   String? _sentEmail;
+  int _resendTimer = 0;
+  bool _resendLoading = false;
 
   @override
   void initState() {
@@ -29,25 +39,27 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   void dispose() {
     _emailController.dispose();
+    for (var c in _codeControllers) c.dispose();
+    for (var f in _focusNodes) f.dispose();
     super.dispose();
   }
 
   Future<void> _checkPendingFlow() async {
     final prefs = await SharedPreferences.getInstance();
-
     final phone = prefs.getString('pending_phone');
     if (phone == null && mounted) {
       Navigator.pushReplacementNamed(context, '/phone_entry');
-      return;
-    }
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && user.email != null) {
-      await _finishSignup(user);
     }
   }
 
-  Future<void> _sendMagicLink() async {
+  // ─── Generate 6-digit code ───
+  String _generateCode() {
+    final rand = Random();
+    return (100000 + rand.nextInt(900000)).toString();
+  }
+
+  // ─── Send OTP ───
+  Future<void> _sendCode() async {
     final email = _emailController.text.trim().toLowerCase();
 
     if (email.isEmpty || !email.contains('@') || !email.contains('.')) {
@@ -61,86 +73,208 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     });
 
     try {
-      final acs = ActionCodeSettings(
-        url: 'https://lumachat.firebaseapp.com',
-        handleCodeInApp: true,
-        androidPackageName: 'com.lumachat.app',
-        androidInstallApp: true,
-        androidMinimumVersion: '1',
-        iOSBundleId: 'com.lumachat.app',
+      final code = _generateCode();
+      final expiresAt = DateTime.now().add(const Duration(minutes: 10));
+
+      // 1. Save code to Firestore (using email as doc ID)
+      await FirebaseFirestore.instance
+          .collection('email_verifications')
+          .doc(email)
+          .set({
+        'email': email,
+        'code': code,
+        'expires_at': Timestamp.fromDate(expiresAt),
+        'created_at': FieldValue.serverTimestamp(),
+        'verified': false,
+      });
+
+      // 2. Send email via EmailJS
+      await emailjs.send(
+        EmailJSConfig.serviceId,
+        EmailJSConfig.templateId,
+        {
+          'to_email': email,
+          'otp_code': code,
+        },
+        emailjs.Options(publicKey: EmailJSConfig.publicKey),
       );
 
-      await FirebaseAuth.instance.sendSignInLinkToEmail(
-        email: email,
-        actionCodeSettings: acs,
-      );
-
+      // 3. Save pending email
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('emailForSignIn', email);
       await prefs.setString('pending_email', email);
 
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _linkSent = true;
+        _codeSent = true;
         _sentEmail = email;
       });
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _error = _friendlyError(e.code);
-      });
+      _startResendTimer();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error = 'Error: $e';
+        _error = 'Failed to send code: $e';
       });
     }
   }
 
-  Future<void> _manualCheck() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      await _finishSignup(user);
-    } else {
-      setState(() =>
-          _error = 'Open the email link on this device to continue.');
+  // ─── Resend code ───
+  Future<void> _resendCode() async {
+    if (_resendTimer > 0 || _sentEmail == null) return;
+    setState(() => _resendLoading = true);
+
+    try {
+      final code = _generateCode();
+      final expiresAt = DateTime.now().add(const Duration(minutes: 10));
+
+      await FirebaseFirestore.instance
+          .collection('email_verifications')
+          .doc(_sentEmail)
+          .set({
+        'email': _sentEmail,
+        'code': code,
+        'expires_at': Timestamp.fromDate(expiresAt),
+        'created_at': FieldValue.serverTimestamp(),
+        'verified': false,
+      });
+
+      await emailjs.send(
+        EmailJSConfig.serviceId,
+        EmailJSConfig.templateId,
+        {'to_email': _sentEmail, 'otp_code': code},
+        emailjs.Options(publicKey: EmailJSConfig.publicKey),
+      );
+
+      if (!mounted) return;
+      setState(() => _resendLoading = false);
+      _startResendTimer();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New code sent!')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _resendLoading = false;
+        _error = 'Resend failed: $e';
+      });
     }
   }
 
-  Future<void> _finishSignup(User user) async {
-    setState(() => _isLoading = true);
+  void _startResendTimer() {
+    if (_resendTimer > 0) return;
+    setState(() => _resendTimer = 60);
+    _tickTimer();
+  }
 
+  void _tickTimer() {
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted && _resendTimer > 0) {
+        setState(() => _resendTimer--);
+        _tickTimer();
+      }
+    });
+  }
+
+  // ─── Verify code ───
+  Future<void> _verifyCode() async {
+    final code = _codeControllers.map((c) => c.text).join();
+    if (code.length != 6) {
+      setState(() => _error = 'Enter all 6 digits');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('email_verifications')
+          .doc(_sentEmail)
+          .get();
+
+      if (!doc.exists) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Code not found. Resend.';
+        });
+        return;
+      }
+
+      final data = doc.data()!;
+      final storedCode = data['code'] as String?;
+      final expiresAt = (data['expires_at'] as Timestamp).toDate();
+
+      if (DateTime.now().isAfter(expiresAt)) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Code expired. Resend.';
+        });
+        return;
+      }
+
+      if (code != storedCode) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Invalid code';
+        });
+        for (final c in _codeControllers) c.clear();
+        _focusNodes[0].requestFocus();
+        return;
+      }
+
+      // Code is correct — mark verified
+      await FirebaseFirestore.instance
+          .collection('email_verifications')
+          .doc(_sentEmail)
+          .update({'verified': true});
+
+      await _finishSignup();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'Verification failed: $e';
+      });
+    }
+  }
+
+  Future<void> _finishSignup() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final phone = prefs.getString('pending_phone') ?? '';
 
-      final docRef =
-          FirebaseFirestore.instance.collection('users').doc(user.uid);
-      final snapshot = await docRef.get();
+      // Sign in anonymously to Firebase (so we have a UID)
+      // Then link the email via updateEmail later, or just create a doc with email as ID
+      // Simpler: use email as UID reference in Firestore.
+      // Actually — create a real Firebase account with a random password.
+      // User won't need it since we can auto-sign-in later using a custom token.
+      // 
+      // EASIEST: Sign in anonymously, then save user doc.
+      final cred = await FirebaseAuth.instance.signInAnonymously();
+      final uid = cred.user!.uid;
 
-      if (!snapshot.exists) {
-        await docRef.set({
-          'uid': user.uid,
-          'email': user.email,
-          'phone': phone,
-          'phone_verified': false,
-          'email_verified': true,
-          'created_at': FieldValue.serverTimestamp(),
-        });
-      } else {
-        await docRef.set({
-          'phone': phone,
-          'email_verified': true,
-          'updated_at': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      }
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'uid': uid,
+        'email': _sentEmail,
+        'phone': phone,
+        'phone_verified': false,
+        'email_verified': true,
+        'created_at': FieldValue.serverTimestamp(),
+      });
 
+      await prefs.setString('mock_user_id', uid);
+      await prefs.setString('mock_email', _sentEmail!);
       await prefs.remove('pending_phone');
       await prefs.remove('pending_email');
-      await prefs.remove('emailForSignIn');
+
+      // Cleanup verification doc
+      await FirebaseFirestore.instance
+          .collection('email_verifications')
+          .doc(_sentEmail)
+          .delete();
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/setup_profile');
@@ -148,38 +282,20 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error = 'Setup error: $e';
+        _error = 'Signup error: $e';
       });
     }
   }
 
-  Future<void> _goBack() async {
-    await FirebaseAuth.instance.signOut();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('emailForSignIn');
-    await prefs.remove('pending_email');
-
-    if (!mounted) return;
-    setState(() {
-      _linkSent = false;
-      _sentEmail = null;
-      _error = null;
-    });
-  }
-
-  String _friendlyError(String code) {
-    switch (code) {
-      case 'invalid-email':
-        return 'That email is not valid.';
-      case 'network-request-failed':
-        return 'Network error. Check your connection.';
-      case 'too-many-requests':
-        return 'Too many attempts. Wait a bit and try again.';
-      case 'unauthorized-continue-uri':
-      case 'invalid-continue-uri':
-        return 'Firebase needs the domain whitelisted.';
-      default:
-        return 'Error: $code';
+  void _onCodeChanged(int index, String value) {
+    if (value.length == 1 && index < 5) {
+      _focusNodes[index + 1].requestFocus();
+    }
+    if (value.isEmpty && index > 0) {
+      _focusNodes[index - 1].requestFocus();
+    }
+    if (_codeControllers.every((c) => c.text.isNotEmpty)) {
+      _verifyCode();
     }
   }
 
@@ -199,7 +315,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               children: [
                 const SizedBox(height: 40),
 
-                // Logo — same blue rounded square as phone entry
                 Container(
                   width: 64,
                   height: 64,
@@ -208,18 +323,15 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Center(
-                    child: Icon(
-                      Icons.chat_bubble_rounded,
-                      color: Colors.white,
-                      size: 32,
-                    ),
+                    child: Icon(Icons.chat_bubble_rounded,
+                        color: Colors.white, size: 32),
                   ),
                 ),
 
                 const SizedBox(height: 32),
 
                 Text(
-                  _linkSent ? 'Check your email' : 'Your email',
+                  _codeSent ? 'Verify your email' : 'Your email',
                   style: theme.textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                     color: theme.colorScheme.onSurface,
@@ -227,9 +339,9 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  _linkSent
-                      ? 'We sent a verification link to $_sentEmail. Tap it on this device.'
-                      : "We'll send you a verification link",
+                  _codeSent
+                      ? 'Enter the 6-digit code sent to $_sentEmail'
+                      : "We'll send you a code to verify your email.",
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface.withOpacity(0.6),
                     height: 1.4,
@@ -238,7 +350,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
                 const SizedBox(height: 40),
 
-                if (!_linkSent)
+                if (!_codeSent)
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -250,56 +362,52 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     ),
                     decoration: InputDecoration(
                       hintText: 'your@email.com',
-                      prefixIcon: Icon(
-                        Icons.email_outlined,
-                        color: theme.colorScheme.primary,
-                      ),
+                      prefixIcon: Icon(Icons.email_outlined,
+                          color: theme.colorScheme.primary),
                     ),
                   ),
 
-                if (_linkSent)
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: theme.colorScheme.primary.withOpacity(0.25),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.mark_email_unread_outlined,
-                          color: theme.colorScheme.primary,
-                          size: 32,
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Verification link sent',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: theme.colorScheme.onSurface,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Tap the link in the email. Will be detected automatically.',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.6),
-                                  height: 1.4,
-                                ),
-                              ),
-                            ],
+                if (_codeSent)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(6, (index) {
+                      return Container(
+                        width: 48,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: theme.brightness == Brightness.dark
+                              ? Colors.white.withOpacity(0.05)
+                              : Colors.black.withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _focusNodes[index].hasFocus
+                                ? theme.colorScheme.primary
+                                : theme.dividerColor,
+                            width: _focusNodes[index].hasFocus ? 2 : 1,
                           ),
                         ),
-                      ],
-                    ),
+                        child: TextField(
+                          controller: _codeControllers[index],
+                          focusNode: _focusNodes[index],
+                          textAlign: TextAlign.center,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(1),
+                          ],
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                          decoration: const InputDecoration(
+                            counterText: '',
+                            border: InputBorder.none,
+                          ),
+                          onChanged: (v) => _onCodeChanged(index, v),
+                        ),
+                      );
+                    }),
                   ),
 
                 if (_error != null) ...[
@@ -320,9 +428,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                           child: Text(
                             _error!,
                             style: const TextStyle(
-                              color: Colors.red,
-                              fontSize: 13,
-                            ),
+                                color: Colors.red, fontSize: 13),
                           ),
                         ),
                       ],
@@ -332,14 +438,13 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
                 const Spacer(),
 
-                // Main button — same style as phone entry
                 SizedBox(
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
                     onPressed: _isLoading
                         ? null
-                        : (_linkSent ? _manualCheck : _sendMagicLink),
+                        : (_codeSent ? _verifyCode : _sendCode),
                     child: _isLoading
                         ? const SizedBox(
                             width: 22,
@@ -349,30 +454,53 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : Text(
-                            _linkSent
-                                ? "I've tapped the link"
-                                : 'Send verification link',
-                          ),
+                        : Text(_codeSent ? 'Verify Code' : 'Send Code'),
                   ),
                 ),
 
-                if (_linkSent) ...[
+                if (_codeSent) ...[
                   const SizedBox(height: 12),
                   Center(
+                    child: _resendTimer > 0
+                        ? Text(
+                            'Resend in $_resendTimer s',
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.4),
+                              fontSize: 14,
+                            ),
+                          )
+                        : _resendLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : TextButton(
+                                onPressed: _resendCode,
+                                child: const Text('Resend Code'),
+                              ),
+                  ),
+                  Center(
                     child: TextButton(
-                      onPressed: _goBack,
-                      child: Text(
-                        'Use different email',
-                        style: TextStyle(color: theme.colorScheme.primary),
-                      ),
+                      onPressed: () {
+                        setState(() {
+                          _codeSent = false;
+                          _error = null;
+                          _resendTimer = 0;
+                          for (final c in _codeControllers) {
+                            c.clear();
+                          }
+                        });
+                      },
+                      child: const Text('Use different email'),
                     ),
                   ),
                 ],
 
                 const SizedBox(height: 16),
 
-                // Same terms footer as phone entry
                 Center(
                   child: Text(
                     'By continuing you agree to our Terms & Privacy Policy',
