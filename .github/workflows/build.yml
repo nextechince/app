@@ -1,4 +1,4 @@
-name: Build AURA CHAT
+name: Build LUMA CHAT
 
 permissions:
   contents: write
@@ -137,11 +137,8 @@ jobs:
           # Lower minSdk
           content = content.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
 
-          # ABI filters
-          content = content.replace(
-              'defaultConfig {',
-              'defaultConfig {\n        ndk { abiFilters "armeabi-v7a", "arm64-v8a" }'
-          )
+          # NOTE: ndk abiFilters intentionally REMOVED here — it conflicts
+          # with --split-per-abi which is what we use to build.
 
           # Firebase plugin
           if 'com.google.gms.google-services' not in content:
@@ -219,14 +216,14 @@ jobs:
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
               <uses-permission android:name="android.permission.VIBRATE" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                   android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
               <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
               <application
-                  android:label="AURA Chat"
+                  android:label="Luma Chat"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
                   android:roundIcon="@mipmap/ic_launcher"
@@ -253,13 +250,12 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
 
-                      <!-- Deep Link: Invitation Links -->
                       <intent-filter android:autoVerify="true">
                           <action android:name="android.intent.action.VIEW"/>
                           <category android:name="android.intent.category.DEFAULT"/>
                           <category android:name="android.intent.category.BROWSABLE"/>
                           <data android:scheme="https"
-                                android:host="aurachat.app"
+                                android:host="lumachat.app"
                                 android:pathPrefix="/invite"/>
                       </intent-filter>
 
@@ -267,12 +263,11 @@ jobs:
                           <action android:name="android.intent.action.VIEW"/>
                           <category android:name="android.intent.category.DEFAULT"/>
                           <category android:name="android.intent.category.BROWSABLE"/>
-                          <data android:scheme="aura"
+                          <data android:scheme="luma"
                                 android:host="invite"/>
                       </intent-filter>
                   </activity>
 
-                  <!-- Firebase Cloud Messaging Service -->
                   <service
                       android:name="com.google.firebase.messaging.FirebaseMessagingService"
                       android:exported="false">
@@ -287,7 +282,7 @@ jobs:
 
                   <meta-data
                       android:name="com.google.firebase.messaging.default_notification_channel_id"
-                      android:value="aura_chat_channel"/>
+                      android:value="luma_chat_channel"/>
               </application>
           </manifest>
           EOF
@@ -314,18 +309,18 @@ jobs:
       - name: Build APK (split per ABI)
         run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK
+      - name: Upload split APKs
         uses: actions/upload-artifact@v4
         with:
-          name: aura-chat-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: luma-chat-apks
+          path: build/app/outputs/flutter-apk/app-*-release.apk
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "build/app/outputs/flutter-apk/app-release.apk"
+          artifacts: "build/app/outputs/flutter-apk/app-*-release.apk"
           tag: v${{ github.run_number }}
-          name: "AURA CHAT v${{ github.run_number }}"
-          body: "AURA CHAT Release - Works on all Android 5.0+ phones"
+          name: "Luma Chat v${{ github.run_number }}"
+          body: "Luma Chat - Works on all Android 5.0+ phones"
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
