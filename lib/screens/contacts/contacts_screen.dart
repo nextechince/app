@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
+
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../providers/chat_provider.dart';
-import '../../services/status_service.dart';
+import 'add_contact_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -13,304 +18,520 @@ class ContactsScreen extends StatefulWidget {
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
-  final _searchController = TextEditingController();
-  List<Map<String, dynamic>> _searchResults = [];
-  bool _isSearching = false;
+  bool _loading = true;
+  bool _permissionDenied = false;
 
-  // Theme colors
-  static const Color _bgDark = Color(0xFF0A0A0F);
-  static const Color _bgCard = Color(0xFF1a103c);
-  static const Color _purple = Color(0xFF8B5CF6);
-  static const Color _cyan = Color(0xFF06B6D4);
+  // Phone contacts (from device)
+  List<Contact> _deviceContacts = [];
 
-  Future<void> _searchUsers(String query) async {
-    if (query.isEmpty) {
-      setState(() => _searchResults = []);
-      return;
-    }
+  // Matched: phone contacts that ARE on Luma Chat
+  final List<Map<String, dynamic>> _onLuma = [];
+
+  // Not matched: phone contacts NOT on Luma Chat yet
+  final List<Map<String, dynamic>> _toInvite = [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadContacts());
+  }
+
+  String get _myUid {
+    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
+    return auth.currentUserId ?? auth.mockUserId ?? '';
+  }
+
+  // ─── Load phone contacts + match against Firestore ───
+
+  Future<void> _loadContacts() async {
+    setState(() {
+      _loading = true;
+      _permissionDenied = false;
+    });
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('username', isGreaterThanOrEqualTo: query)
-          .where('username', isLessThanOrEqualTo: '$query\uf8ff')
-          .limit(20)
-          .get();
-
-      final results = <Map<String, dynamic>>[];
-      for (final doc in snapshot.docs) {
-        if (doc.id == currentUserId) continue;
-
-        // Check if already saved
-        final isSaved = await StatusService.isContact(currentUserId!, doc.id);
-
-        results.add({
-          'id': doc.id,
-          ...doc.data(),
-          'is_saved': isSaved,
+      // 1. Request permission
+      final status = await Permission.contacts.request();
+      if (!status.isGranted) {
+        if (!mounted) return;
+        setState(() {
+          _permissionDenied = true;
+          _loading = false;
         });
+        return;
       }
 
-      setState(() => _searchResults = results);
-    } catch (e) {
-      debugPrint('Search error: $e');
-    }
-  }
-
-  Future<void> _saveContact(String contactUserId) async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-    final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
-
-    if (currentUserId == null) return;
-
-    final success = await StatusService.saveContact(currentUserId, contactUserId);
-
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Contact saved! You can now see their status.'),
-          backgroundColor: Colors.green,
-        ),
+      // 2. Read phone contacts
+      final contacts = await FlutterContacts.getContacts(
+        withProperties: true,
+        withPhoto: false,
       );
 
-      // Refresh search results
-      _searchUsers(_searchController.text);
+      // 3. Normalize numbers → E.164-ish
+      final normalized = <String, Contact>{};
+      for (final c in contacts) {
+        for (final phone in c.phones) {
+          final digits = phone.number.replaceAll(RegExp(r'\D'), '');
+          if (digits.length < 6) continue;
+          final withPlus = '+$digits';
+          normalized[withPlus] = c;
+        }
+      }
 
-      // Refresh chat provider contacts
-      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-      await chatProvider.loadContacts();
+      if (normalized.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _deviceContacts = contacts;
+          _loading = false;
+        });
+        return;
+      }
+
+      // 4. Query Firestore for matching users (batch by 30 — Firestore IN limit)
+      final keys = normalized.keys.toList();
+      final matchedUsers = <String, Map<String, dynamic>>{};
+
+      for (var i = 0; i < keys.length; i += 30) {
+        final end = (i + 30 > keys.length) ? keys.length : i + 30;
+        final chunk = keys.sublist(i, end);
+
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('phone', whereIn: chunk)
+            .get();
+
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          data['uid'] = doc.id;
+          final phone = data['phone'] as String?;
+          if (phone != null) {
+            matchedUsers[phone] = data;
+          }
+        }
+      }
+
+      // 5. Split into onLuma vs toInvite
+      final onLuma = <Map<String, dynamic>>[];
+      final toInvite = <Map<String, dynamic>>[];
+
+      final myUid = _myUid;
+
+      for (final entry in normalized.entries) {
+        final phone = entry.key;
+        final contact = entry.value;
+        final displayName = contact.displayName.isNotEmpty
+            ? contact.displayName
+            : phone;
+
+        final match = matchedUsers[phone];
+
+        if (match != null) {
+          // Skip self
+          if (match['uid'] == myUid) continue;
+          onLuma.add({
+            'uid': match['uid'],
+            'phone': phone,
+            'display_name':
+                match['display_name'] ?? match['username'] ?? displayName,
+            'username': match['username'] ?? '',
+            'avatar_url': match['avatar_url'],
+            'contact_name': displayName,
+          });
+        } else {
+          toInvite.add({
+            'phone': phone,
+            'display_name': displayName,
+          });
+        }
+      }
+
+      onLuma.sort((a, b) =>
+          (a['display_name'] as String).toLowerCase().compareTo(
+              (b['display_name'] as String).toLowerCase()));
+      toInvite.sort((a, b) =>
+          (a['display_name'] as String).toLowerCase().compareTo(
+              (b['display_name'] as String).toLowerCase()));
+
+      if (!mounted) return;
+      setState(() {
+        _deviceContacts = contacts;
+        _onLuma
+          ..clear()
+          ..addAll(onLuma);
+        _toInvite
+          ..clear()
+          ..addAll(toInvite);
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Load contacts error: $e');
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
   }
+
+  // ─── Actions ───
+
+  Future<void> _startChat(Map<String, dynamic> contact) async {
+    final chatProvider = context.read<ChatProvider>();
+    final uid = contact['uid'] as String?;
+    if (uid == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    final chat = await chatProvider.startDirectChat(uid);
+
+    if (!mounted) return;
+    Navigator.pop(context); // close loading
+
+    if (chat != null) {
+      Navigator.pushNamed(
+        context,
+        '/chat',
+        arguments: {
+          'chatId': chat['id'],
+          'chatName': contact['display_name'],
+          'chatAvatar': contact['avatar_url'],
+          'isGroup': false,
+          'otherUserId': uid,
+        },
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start chat')),
+      );
+    }
+  }
+
+  Future<void> _inviteContact(String phone) async {
+    // Simple: show a snackbar. Replace with SMS intent later.
+    await Clipboard.setData(ClipboardData(text: phone));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Phone copied: $phone')),
+    );
+  }
+
+  // ─── BUILD ───
 
   @override
   Widget build(BuildContext context) {
-    final chatProvider = Provider.of<ChatProvider>(context);
+    final theme = Theme.of(context);
 
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [_bgDark, _bgCard, Color(0xFF0f172a)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    Expanded(
-                      child: ShaderMask(
-                        shaderCallback: (bounds) => const LinearGradient(
-                          colors: [_purple, _cyan],
-                        ).createShader(bounds),
-                        child: const Text(
-                          'Contacts',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Search bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                  ),
-                  child: TextField(
-                    controller: _searchController,
-                    style: const TextStyle(color: Colors.white),
-                    onChanged: _searchUsers,
-                    decoration: InputDecoration(
-                      hintText: 'Search by username...',
-                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                      prefixIcon: Icon(Icons.search, color: Colors.white.withOpacity(0.3)),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.white54),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchResults = []);
-                              },
-                            )
-                          : null,
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Search results
-              if (_searchResults.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            // App bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(
                     child: Text(
-                      'Search Results',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.4),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      'Contacts',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ..._searchResults.map((user) => _buildUserTile(user, isSearchResult: true)),
-                const Divider(color: Colors.white12, indent: 24, endIndent: 24),
-              ],
-
-              // Saved contacts
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    chatProvider.contacts.isEmpty ? 'No saved contacts' : 'Saved Contacts',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.4),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: () =>
+                        Navigator.pushNamed(context, '/global_search'),
                   ),
-                ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _loading ? null : _loadContacts,
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
+            ),
 
-              Expanded(
-                child: chatProvider.isLoading
-                    ? const Center(child: CircularProgressIndicator(color: _purple))
-                    : chatProvider.contacts.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.people_outline, size: 64, color: Colors.white.withOpacity(0.1)),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No contacts yet',
-                                  style: TextStyle(color: Colors.white.withOpacity(0.3)),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Search above to find and save contacts',
-                                  style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            itemCount: chatProvider.contacts.length,
-                            itemBuilder: (context, index) {
-                              final contact = chatProvider.contacts[index];
-                              return _buildUserTile(contact, isSearchResult: false);
-                            },
-                          ),
-              ),
-            ],
-          ),
+            // Body
+            Expanded(child: _buildBody(theme)),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildUserTile(Map<String, dynamic> user, {required bool isSearchResult}) {
-    final username = user['username'] ?? 'Unknown';
-    final avatar = user['avatar_url'];
-    final phone = user['phone'] ?? '';
-    final isSaved = user['is_saved'] == true || !isSearchResult;
+  Widget _buildBody(ThemeData theme) {
+    if (_loading) {
+      return Center(
+        child: CircularProgressIndicator(color: theme.colorScheme.primary),
+      );
+    }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: avatar == null
-                ? const LinearGradient(colors: [_purple, _cyan])
-                : null,
-            image: avatar != null
-                ? DecorationImage(image: NetworkImage(avatar), fit: BoxFit.cover)
-                : null,
-          ),
-          child: avatar == null
-              ? Text(
-                  username[0].toUpperCase(),
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                )
-              : null,
+    if (_permissionDenied) {
+      return _permissionGate(theme);
+    }
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 96),
+      children: [
+        // ── Top actions ──
+        _actionTile(
+          theme,
+          icon: Icons.group_add_outlined,
+          iconColor: theme.colorScheme.primary,
+          label: 'New Group',
+          onTap: () => Navigator.pushNamed(context, '/create_group'),
         ),
-        title: Text(
-          username,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        _actionTile(
+          theme,
+          icon: Icons.campaign_outlined,
+          iconColor: theme.colorScheme.primary,
+          label: 'New Channel',
+          onTap: () => Navigator.pushNamed(context, '/create_channel'),
         ),
-        subtitle: Text(
-          phone,
-          style: TextStyle(color: Colors.white.withOpacity(0.4)),
+        _actionTile(
+          theme,
+          icon: Icons.person_add_outlined,
+          iconColor: theme.colorScheme.primary,
+          label: 'New Chat',
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const AddContactScreen(),
+              ),
+            );
+          },
         ),
-        trailing: isSearchResult && !isSaved
-            ? ElevatedButton(
-                onPressed: () => _saveContact(user['id']),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _purple,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                ),
-                child: const Text('Save'),
-              )
-            : Row(
-                mainAxisSize: MainAxisSize.min,
+
+        const SizedBox(height: 8),
+        Divider(height: 0.5, color: theme.dividerColor),
+
+        // ── On Luma Chat ──
+        if (_onLuma.isNotEmpty) ...[
+          _sectionHeader(theme, 'ON LUMA CHAT', _onLuma.length),
+          ..._onLuma.map((c) => _contactTile(theme, c)),
+        ],
+
+        // ── Invite ──
+        if (_toInvite.isNotEmpty) ...[
+          _sectionHeader(theme, 'INVITE', _toInvite.length),
+          ..._toInvite.map((c) => _inviteTile(theme, c)),
+        ],
+
+        // ── Empty state ──
+        if (_onLuma.isEmpty && _toInvite.isEmpty) ...[
+          const SizedBox(height: 60),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.message, color: _purple),
-                    onPressed: () async {
-                      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-                      final chat = await chatProvider.startDirectChat(user['id']);
-                      if (chat != null && context.mounted) {
-                        Navigator.pushNamed(context, '/chat', arguments: chat);
-                      }
-                    },
+                  Icon(
+                    Icons.contacts_outlined,
+                    size: 64,
+                    color: theme.colorScheme.onSurface.withOpacity(0.15),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.call, color: _cyan),
-                    onPressed: () {},
+                  const SizedBox(height: 16),
+                  Text(
+                    'No contacts found',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Contacts from your phone will appear here.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                    ),
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ─── Permission gate ───
+  Widget _permissionGate(ThemeData theme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.contacts_outlined,
+              size: 72,
+              color: theme.colorScheme.primary.withOpacity(0.4),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Contacts permission needed',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Luma Chat needs access to your phone contacts to find friends.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _loadContacts,
+              child: const Text('Grant Permission'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => openAppSettings(),
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Section header ───
+  Widget _sectionHeader(ThemeData theme, String label, int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface.withOpacity(0.55),
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withOpacity(0.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Top action tile ───
+  Widget _actionTile(
+    ThemeData theme, {
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: iconColor.withOpacity(0.15),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: iconColor, size: 22),
+      ),
+      title: Text(
+        label,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  // ─── On Luma Chat contact tile ───
+  Widget _contactTile(ThemeData theme, Map<String, dynamic> c) {
+    final name = c['display_name'] as String? ?? 'User';
+    final username = c['username'] as String? ?? '';
+    final avatar = c['avatar_url'] as String?;
+
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 24,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+        backgroundImage:
+            (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
+        child: (avatar == null || avatar.isEmpty)
+            ? Text(
+                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                style: TextStyle(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 18,
+                ),
+              )
+            : null,
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+      ),
+      subtitle: username.isNotEmpty
+          ? Text(
+              '@$username',
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            )
+          : null,
+      onTap: () => _startChat(c),
+    );
+  }
+
+  // ─── Invite tile ───
+  Widget _inviteTile(ThemeData theme, Map<String, dynamic> c) {
+    final name = c['display_name'] as String? ?? 'Contact';
+    final phone = c['phone'] as String? ?? '';
+
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 24,
+        backgroundColor: theme.colorScheme.onSurface.withOpacity(0.08),
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : '?',
+          style: TextStyle(
+            color: theme.colorScheme.onSurface.withOpacity(0.6),
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+          ),
+        ),
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+      ),
+      subtitle: Text(
+        phone,
+        style: TextStyle(
+          fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.5),
+        ),
+      ),
+      trailing: TextButton(
+        onPressed: () => _inviteContact(phone),
+        child: Text(
+          'Invite',
+          style: TextStyle(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
