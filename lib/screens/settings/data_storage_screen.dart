@@ -7,120 +7,134 @@ class DataStorageScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final settingsProvider = Provider.of<SettingsProvider>(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F), // Purple theme dark background
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Storage and Data', style: TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF0A0A0F), // Purple theme dark background
+        title: const Text('Storage and Data'),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          _buildSectionHeader(context, 'Media Auto-Download'),
-
-          _buildSwitchTile(
+          _sectionTitle(theme, 'MEDIA AUTO-DOWNLOAD'),
+          _switchTile(
+            theme,
             title: 'Photos',
             subtitle: 'Auto-download photos',
             value: settingsProvider.autoDownloadMedia,
-            onChanged: (value) => settingsProvider.setAutoDownloadMedia(value),
+            onChanged: (v) =>
+                settingsProvider.setAutoDownloadMedia(v),
           ),
-
-          _buildSwitchTile(
+          _switchTile(
+            theme,
             title: 'Documents',
             subtitle: 'Auto-download documents',
             value: settingsProvider.autoDownloadDocuments,
-            onChanged: (value) => settingsProvider.setAutoDownloadDocuments(value),
+            onChanged: (v) =>
+                settingsProvider.setAutoDownloadDocuments(v),
           ),
 
-          const SizedBox(height: 24),
+          Divider(height: 0.5, color: theme.dividerColor),
 
-          _buildSectionHeader(context, 'Storage Usage'),
-
-          _buildListTile(
-            icon: Icons.folder,
+          _sectionTitle(theme, 'STORAGE USAGE'),
+          _listTile(
+            theme,
+            icon: Icons.folder_outlined,
             title: 'Manage Storage',
             subtitle: 'View and free up space',
             onTap: () {},
           ),
 
-          const SizedBox(height: 24),
+          Divider(height: 0.5, color: theme.dividerColor),
 
-          _buildSectionHeader(context, 'Gallery'),
-
-          _buildSwitchTile(
+          _sectionTitle(theme, 'GALLERY'),
+          _switchTile(
+            theme,
             title: 'Save to Gallery',
             subtitle: 'Save media to device gallery',
             value: settingsProvider.saveToGallery,
-            onChanged: (value) => settingsProvider.setSaveToGallery(value),
+            onChanged: (v) => settingsProvider.setSaveToGallery(v),
           ),
+
+          const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title) {
+  Widget _sectionTitle(ThemeData theme, String title) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Text(
         title,
-        style: const TextStyle(
-          fontSize: 14,
+        style: TextStyle(
+          fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: Color(0xFF8B5CF6), // Purple accent
-          letterSpacing: 1,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
         ),
       ),
     );
   }
 
-  Widget _buildSwitchTile({
+  Widget _switchTile(
+    ThemeData theme, {
     required String title,
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
+    return SwitchListTile(
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
       ),
-      child: SwitchListTile(
-        title: Text(title, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.5))),
-        value: value,
-        onChanged: onChanged,
-        activeColor: const Color(0xFF8B5CF6), // Purple accent
-        inactiveTrackColor: Colors.white.withOpacity(0.1),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+        ),
       ),
+      value: value,
+      onChanged: onChanged,
+      activeColor: theme.colorScheme.primary,
     );
   }
 
-  Widget _buildListTile({
+  Widget _listTile(
+    ThemeData theme, {
     required IconData icon,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: theme.colorScheme.onSurface.withOpacity(0.75),
       ),
-      child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF8B5CF6)), // Purple accent
-        title: Text(title, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.5))),
-        trailing: const Icon(Icons.chevron_right, color: Colors.white54),
-        onTap: onTap,
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
       ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+        ),
+      ),
+      trailing: Icon(
+        Icons.chevron_right,
+        color: theme.colorScheme.onSurface.withOpacity(0.35),
+        size: 20,
+      ),
+      onTap: onTap,
     );
   }
 }
