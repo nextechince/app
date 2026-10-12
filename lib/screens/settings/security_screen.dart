@@ -33,33 +33,6 @@ class _SecurityScreenState extends State<SecurityScreen> {
     _checkBiometrics();
   }
 
-  Future<void> _checkBiometrics() async {
-    try {
-      bool canCheck = await _localAuth.canCheckBiometrics;
-      List<BiometricType> availableBiometrics = [];
-      
-      if (canCheck) {
-        availableBiometrics = await _localAuth.getAvailableBiometrics();
-      }
-
-      if (mounted) {
-        setState(() {
-          _canCheckBiometrics = canCheck;
-          _isBiometricAvailable = availableBiometrics.isNotEmpty;
-          _availableBiometrics = availableBiometrics;
-        });
-      }
-    } on PlatformException catch (e) {
-      debugPrint('Biometric check error: $e');
-      if (mounted) {
-        setState(() {
-          _canCheckBiometrics = false;
-          _isBiometricAvailable = false;
-        });
-      }
-    }
-  }
-
   @override
   void dispose() {
     _passcodeController.dispose();
@@ -67,24 +40,57 @@ class _SecurityScreenState extends State<SecurityScreen> {
     super.dispose();
   }
 
+  void _toast(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
+  }
+
+  Future<void> _checkBiometrics() async {
+    try {
+      final canCheck = await _localAuth.canCheckBiometrics;
+      List<BiometricType> availableBiometrics = [];
+
+      if (canCheck) {
+        availableBiometrics = await _localAuth.getAvailableBiometrics();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _canCheckBiometrics = canCheck;
+        _isBiometricAvailable = availableBiometrics.isNotEmpty;
+        _availableBiometrics = availableBiometrics;
+      });
+    } on PlatformException catch (e) {
+      debugPrint('Biometric check error: $e');
+      if (!mounted) return;
+      setState(() {
+        _canCheckBiometrics = false;
+        _isBiometricAvailable = false;
+      });
+    }
+  }
+
   Future<void> _toggleBiometric(bool value) async {
-    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
 
     if (value) {
       if (!_isBiometricAvailable) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No biometric credentials are enrolled on this device. Please set up fingerprint or face ID in your device settings first.'),
-              duration: Duration(seconds: 4),
-            ),
-          );
-        }
+        _toast(
+          'No biometric credentials enrolled. Set up fingerprint or face ID in device settings first.',
+          error: true,
+        );
         return;
       }
 
       try {
-        bool didAuthenticate = await _localAuth.authenticate(
+        final didAuthenticate = await _localAuth.authenticate(
           localizedReason: 'Authenticate to enable biometric lock',
           authMessages: const [
             AndroidAuthMessages(
@@ -95,14 +101,17 @@ class _SecurityScreenState extends State<SecurityScreen> {
               biometricRequiredTitle: 'Biometric authentication required',
               biometricSuccess: 'Authentication successful',
               deviceCredentialsRequiredTitle: 'Device credentials required',
-              deviceCredentialsSetupDescription: 'Please set up device credentials',
+              deviceCredentialsSetupDescription:
+                  'Please set up device credentials',
               goToSettingsButton: 'Go to Settings',
-              goToSettingsDescription: 'Please set up biometric authentication in your device settings',
+              goToSettingsDescription:
+                  'Please set up biometric authentication in your device settings',
             ),
             IOSAuthMessages(
               cancelButton: 'Cancel',
               goToSettingsButton: 'Go to Settings',
-              goToSettingsDescription: 'Please set up biometric authentication in your device settings',
+              goToSettingsDescription:
+                  'Please set up biometric authentication in your device settings',
               lockOut: 'Please re-enable biometric authentication',
             ),
           ],
@@ -116,150 +125,129 @@ class _SecurityScreenState extends State<SecurityScreen> {
 
         if (didAuthenticate) {
           await settingsProvider.setBiometricLock(true);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Biometric lock enabled'),
-                backgroundColor: Color(0xFF8B5CF6),
-              ),
-            );
-          }
+          _toast('Biometric lock enabled');
         }
       } on PlatformException catch (e) {
         debugPrint('Biometric auth error: $e');
-        if (mounted) {
-          String message = 'Biometric authentication failed';
-          if (e.code == 'NotAvailable') {
-            message = 'Biometric authentication is not available on this device';
-          } else if (e.code == 'NotEnrolled') {
-            message = 'No biometric credentials are enrolled. Please set up fingerprint or face ID in your device settings.';
-          } else if (e.code == 'PasscodeNotSet') {
-            message = 'Please set a device passcode first';
-          } else if (e.code == 'no_fragment_activity') {
-            message = 'App configuration issue. Please update the app.';
-          }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
+        String message = 'Biometric authentication failed';
+        if (e.code == 'NotAvailable') {
+          message = 'Biometric authentication is not available';
+        } else if (e.code == 'NotEnrolled') {
+          message =
+              'No biometric credentials enrolled. Set up fingerprint or face ID first.';
+        } else if (e.code == 'PasscodeNotSet') {
+          message = 'Please set a device passcode first';
+        } else if (e.code == 'no_fragment_activity') {
+          message = 'App configuration issue. Please update the app.';
         }
+        _toast(message, error: true);
       } catch (e) {
         debugPrint('Unexpected biometric error: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Biometric error: $e')),
-          );
-        }
+        _toast('Biometric error: $e', error: true);
       }
     } else {
       await settingsProvider.setBiometricLock(false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Biometric lock disabled'),
-            backgroundColor: Color(0xFF8B5CF6),
-          ),
-        );
-      }
+      _toast('Biometric lock disabled');
     }
   }
 
   void _showAutoLockPicker() {
-    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
-    
+    final theme = Theme.of(context);
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(2),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Auto-Lock Timer',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Auto-Lock Timer',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Lock app after being in background for:',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 14,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Lock app after being in background for:',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color:
+                          theme.colorScheme.onSurface.withOpacity(0.55),
+                    ),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ..._autoLockOptions.map((option) {
-              final isSelected = settingsProvider.autoLockTimeout == option['value'];
-              return ListTile(
-                leading: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
+              ..._autoLockOptions.map((option) {
+                final isSelected =
+                    settingsProvider.autoLockTimeout == option['value'];
+                return ListTile(
+                  leading: Icon(
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
                     color: isSelected
-                        ? const Color(0xFF8B5CF6)
-                        : Colors.white.withOpacity(0.1),
-                    border: Border.all(
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface.withOpacity(0.4),
+                  ),
+                  title: Text(
+                    option['label'],
+                    style: TextStyle(
                       color: isSelected
-                          ? const Color(0xFF8B5CF6)
-                          : Colors.white.withOpacity(0.2),
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
-                  child: isSelected
-                      ? const Icon(Icons.check, size: 14, color: Colors.white)
-                      : null,
-                ),
-                title: Text(
-                  option['label'],
-                  style: TextStyle(
-                    color: isSelected ? const Color(0xFF8B5CF6) : Colors.white,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                  ),
-                ),
-                onTap: () {
-                  settingsProvider.setAutoLockTimeout(option['value']);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Auto-lock set to ${option['label']}'),
-                      backgroundColor: const Color(0xFF8B5CF6),
-                    ),
-                  );
-                },
-              );
-            }),
-          ],
+                  onTap: () {
+                    settingsProvider.setAutoLockTimeout(option['value']);
+                    Navigator.pop(ctx);
+                    _toast('Auto-lock set to ${option['label']}');
+                  },
+                );
+              }),
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _showPasscodeDialog() {
+    final theme = Theme.of(context);
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Set App Passcode',
-          style: TextStyle(color: Colors.white),
-        ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Set App Passcode'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -268,17 +256,9 @@ class _SecurityScreenState extends State<SecurityScreen> {
               keyboardType: TextInputType.number,
               maxLength: 6,
               obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 labelText: 'Enter 6-digit passcode',
-                labelStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                 counterText: '',
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -287,17 +267,9 @@ class _SecurityScreenState extends State<SecurityScreen> {
               keyboardType: TextInputType.number,
               maxLength: 6,
               obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 labelText: 'Confirm passcode',
-                labelStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                 counterText: '',
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
               ),
             ),
           ],
@@ -307,25 +279,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
             onPressed: () {
               _passcodeController.clear();
               _confirmPasscodeController.clear();
-              Navigator.pop(context);
+              Navigator.pop(ctx);
             },
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: Colors.white.withOpacity(0.5)),
-            ),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
               if (_passcodeController.text.length != 6) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Passcode must be 6 digits')),
-                );
+                _toast('Passcode must be 6 digits', error: true);
                 return;
               }
-              if (_passcodeController.text != _confirmPasscodeController.text) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Passcodes do not match')),
-                );
+              if (_passcodeController.text !=
+                  _confirmPasscodeController.text) {
+                _toast('Passcodes do not match', error: true);
                 return;
               }
 
@@ -337,20 +303,14 @@ class _SecurityScreenState extends State<SecurityScreen> {
               _passcodeController.clear();
               _confirmPasscodeController.clear();
 
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Passcode set successfully'),
-                    backgroundColor: Color(0xFF8B5CF6),
-                  ),
-                );
-              }
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              _toast('Passcode set successfully');
             },
-            child: const Text(
-              'Set',
-              style: TextStyle(color: Color(0xFF8B5CF6)),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.primary,
             ),
+            child: const Text('Set'),
           ),
         ],
       ),
@@ -359,48 +319,41 @@ class _SecurityScreenState extends State<SecurityScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final settingsProvider = Provider.of<SettingsProvider>(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Security'),
-        backgroundColor: Colors.transparent,
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
       ),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          Text(
-            'Authentication',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF8B5CF6).withOpacity(0.8),
-              letterSpacing: 1,
-            ),
-          ),
-          const SizedBox(height: 16),
+          _sectionTitle(theme, 'AUTHENTICATION'),
 
-          _buildToggleCard(
+          _toggleTile(
+            theme,
             icon: Icons.verified_user_outlined,
-            iconColor: const Color(0xFF8B5CF6),
             title: 'Two-Step Verification',
             subtitle: 'Add extra security to your account',
             value: settingsProvider.twoStepVerification,
-            onChanged: (value) => settingsProvider.setTwoStepVerification(value),
+            onChanged: (v) =>
+                settingsProvider.setTwoStepVerification(v),
           ),
 
-          _buildToggleCard(
+          _toggleTile(
+            theme,
             icon: Icons.lock_outline,
-            iconColor: const Color(0xFF06B6D4),
             title: 'App Passcode',
             subtitle: settingsProvider.appPasscode
                 ? 'Passcode is set'
                 : 'Lock app with a 6-digit code',
             value: settingsProvider.appPasscode,
-            onChanged: (value) {
-              if (value) {
+            onChanged: (v) {
+              if (v) {
                 _showPasscodeDialog();
               } else {
                 settingsProvider.setAppPasscode(false);
@@ -409,19 +362,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
             },
           ),
 
-          // NEW: Auto-Lock Timer
-          _buildActionCard(
+          _actionTile(
+            theme,
             icon: Icons.timer_outlined,
-            iconColor: const Color(0xFFF59E0B),
             title: 'Auto-Lock Timer',
-            subtitle: '${settingsProvider.autoLockTimeout} minute${settingsProvider.autoLockTimeout != 1 ? 's' : ''}',
+            subtitle:
+                '${settingsProvider.autoLockTimeout} minute${settingsProvider.autoLockTimeout != 1 ? 's' : ''}',
             onTap: _showAutoLockPicker,
           ),
 
           if (_canCheckBiometrics)
-            _buildToggleCard(
+            _toggleTile(
+              theme,
               icon: Icons.fingerprint,
-              iconColor: const Color(0xFF8B5CF6),
               title: 'Biometric Lock',
               subtitle: _isBiometricAvailable
                   ? 'Use fingerprint or face ID'
@@ -431,253 +384,157 @@ class _SecurityScreenState extends State<SecurityScreen> {
             ),
 
           if (!_canCheckBiometrics)
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.03),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.06),
+            ListTile(
+              leading: Icon(
+                Icons.fingerprint,
+                color: theme.colorScheme.onSurface.withOpacity(0.35),
+              ),
+              title: Text(
+                'Biometric Lock',
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.4),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-              child: Row(
+              subtitle: Text(
+                'Not available on this device',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurface.withOpacity(0.35),
+                ),
+              ),
+              enabled: false,
+            ),
+
+          Divider(height: 0.5, color: theme.dividerColor),
+
+          _sectionTitle(theme, 'SECURITY INFO'),
+
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurface.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.fingerprint,
-                      color: Colors.grey.withOpacity(0.5),
-                    ),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: theme.colorScheme.primary,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'About Security Features',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Biometric Lock',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          'Not available on this device',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.3),
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 14),
+                  Text(
+                    'Two-Step Verification: Requires OTP every time you sign in on a new device.\n\n'
+                    'App Passcode: Locks the app when you close it. You will need to enter the passcode to open it.\n\n'
+                    'Auto-Lock: Automatically locks the app after being in the background for the selected time.\n\n'
+                    'Biometric Lock: Uses your device fingerprint or face recognition to unlock the app.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      height: 1.6,
                     ),
                   ),
                 ],
               ),
             ),
+          ),
 
           const SizedBox(height: 32),
-
-          Text(
-            'Security Info',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF8B5CF6).withOpacity(0.8),
-              letterSpacing: 1,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.06),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF06B6D4).withOpacity(0.15),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.info_outline,
-                        color: Color(0xFF06B6D4),
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text(
-                      'About Security Features',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Two-Step Verification: Requires OTP every time you sign in on a new device.\n\n'
-                  'App Passcode: Locks the app when you close it. You will need to enter the passcode to open it.\n\n'
-                  'Auto-Lock: Automatically locks the app after being in the background for the selected time.\n\n'
-                  'Biometric Lock: Uses your device fingerprint or face recognition to unlock the app.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.white.withOpacity(0.4),
-                    height: 1.6,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildToggleCard({
+  // ── Helpers ──
+  Widget _sectionTitle(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+
+  Widget _toggleTile(
+    ThemeData theme, {
     required IconData icon,
-    required Color iconColor,
     required String title,
     required String subtitle,
     required bool value,
-    Function(bool)? onChanged,
+    required ValueChanged<bool>? onChanged,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: value
-              ? iconColor.withOpacity(0.3)
-              : Colors.white.withOpacity(0.06),
+    return SwitchListTile(
+      secondary: Icon(
+        icon,
+        color: theme.colorScheme.onSurface.withOpacity(0.75),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.15),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: iconColor, size: 22),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(0.4),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: Colors.white,
-            activeTrackColor: iconColor,
-            inactiveThumbColor: Colors.grey,
-            inactiveTrackColor: Colors.grey.withOpacity(0.3),
-          ),
-        ],
-      ),
+      value: value,
+      onChanged: onChanged,
+      activeColor: theme.colorScheme.primary,
     );
   }
 
-  Widget _buildActionCard({
+  Widget _actionTile(
+    ThemeData theme, {
     required IconData icon,
-    required Color iconColor,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.03),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.06),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.15),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: iconColor, size: 22),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withOpacity(0.4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              color: Colors.white.withOpacity(0.2),
-              size: 20,
-            ),
-          ],
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: theme.colorScheme.onSurface.withOpacity(0.75),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
         ),
       ),
+      trailing: Icon(
+        Icons.chevron_right,
+        color: theme.colorScheme.onSurface.withOpacity(0.35),
+        size: 20,
+      ),
+      onTap: onTap,
     );
   }
 }
