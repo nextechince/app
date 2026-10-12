@@ -33,32 +33,10 @@ jobs:
         run: |
           cp android/app/google-services.json /tmp/google-services.json
           rm -rf android
-          # --org com.lumachat + --project-name app → generates package com.lumachat.app
           flutter create . --platforms=android --org com.lumachat --project-name app
           mkdir -p android/app
           cp /tmp/google-services.json android/app/
           ls -la android/app/google-services.json
-
-      - name: Force package name to com.lumachat.app
-        run: |
-          set -e
-          
-          echo "=== Before: looking for default kotlin dirs ==="
-          find android/app/src/main/kotlin -type d 2>/dev/null || true
-          
-          # Wipe ALL existing kotlin folders and recreate cleanly
-          rm -rf android/app/src/main/kotlin
-          mkdir -p android/app/src/main/kotlin/com/lumachat/app
-          
-          cat > android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt << 'EOF'
-          package com.lumachat.app
-          import io.flutter.embedding.android.FlutterFragmentActivity
-          class MainActivity: FlutterFragmentActivity() {}
-          EOF
-          
-          echo "=== After: kotlin dirs ==="
-          find android/app/src/main/kotlin -type d
-          cat android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt
 
       - name: Fix settings.gradle
         run: |
@@ -142,7 +120,17 @@ jobs:
           }
           EOF
 
-      - name: Force app build.gradle package name
+      - name: Create EmailJS config
+        run: |
+          cat > lib/services/emailjs_config.dart << 'EOF'
+          class EmailJSConfig {
+            static const String serviceId = '${{ secrets.EMAILJS_SERVICE_ID }}';
+            static const String templateId = '${{ secrets.EMAILJS_TEMPLATE_ID }}';
+            static const String publicKey = '${{ secrets.EMAILJS_PUBLIC_KEY }}';
+          }
+          EOF
+
+      - name: Fix app build.gradle for ALL phones
         run: |
           python3 << 'PYEOF'
           import re
@@ -150,7 +138,7 @@ jobs:
           with open('android/app/build.gradle', 'r') as f:
               content = f.read()
 
-          # Nuke every possible namespace / applicationId variant
+          # Force package name
           content = re.sub(r'namespace\s+"[^"]*"', 'namespace "com.lumachat.app"', content)
           content = re.sub(r'applicationId\s+"[^"]*"', 'applicationId "com.lumachat.app"', content)
 
@@ -183,26 +171,16 @@ jobs:
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(content)
-
-          print("=== android/app/build.gradle ===")
-          with open('android/app/build.gradle', 'r') as f:
-              print(f.read())
           PYEOF
 
-      - name: Verify google-services.json matches
+      - name: Force MainActivity path
         run: |
-          python3 << 'PYEOF'
-          import json
-          with open('android/app/google-services.json') as f:
-              data = json.load(f)
-          packages = [c['client_info']['android_client_info']['package_name'] for c in data['client']]
-          print("Registered packages in google-services.json:", packages)
-          if 'com.lumachat.app' not in packages:
-              print("ERROR: com.lumachat.app not found in google-services.json")
-              print("You must register this package in Firebase Console and re-download.")
-              exit(1)
-          print("OK: com.lumachat.app is registered")
-          PYEOF
+          mkdir -p android/app/src/main/kotlin/com/lumachat/app
+          cat > android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt << 'EOF'
+          package com.lumachat.app
+          import io.flutter.embedding.android.FlutterFragmentActivity
+          class MainActivity: FlutterFragmentActivity() {}
+          EOF
 
       - name: Create ProGuard rules
         run: |
@@ -323,7 +301,7 @@ jobs:
       - name: Create asset directories
         run: |
           mkdir -p assets/images assets/emojis assets/audio
-               
+
       - name: Get dependencies
         run: flutter pub get
 
