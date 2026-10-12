@@ -22,7 +22,9 @@ import 'providers/moderation_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding/terms_screen.dart';
 import 'screens/auth/phone_entry_screen.dart';
-import 'screens/auth/email_verification_screen.dart';
+import 'screens/auth/email_entry_screen.dart';
+import 'screens/auth/passcode_setup_screen.dart';
+import 'screens/auth/signin_passcode_screen.dart';
 import 'screens/auth/setup_profile_screen.dart';
 import 'screens/main_app_screen.dart';
 import 'screens/chat/chat_screen.dart';
@@ -104,7 +106,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MAIN — crash-proof + offline-friendly
+// MAIN
 // ═════════════════════════════════════════════════════════════════════════════
 void main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -117,23 +119,18 @@ void main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // ── Firebase init (required, but graceful if offline) ──
     try {
       await Firebase.initializeApp();
     } catch (e) {
       debugPrint('⚠️ Firebase init failed: $e');
-      // If Firebase fails completely, we still want to try running the app
-      // so the error screen shows instead of a black screen.
     }
 
-    // ── FCM background handler (non-fatal) ──
     try {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     } catch (e) {
       debugPrint('⚠️ FCM background handler failed: $e');
     }
 
-    // ── Local notifications (non-fatal) ──
     try {
       await NotificationService.init();
       await NotificationService.requestPermission();
@@ -141,37 +138,31 @@ void main() async {
       debugPrint('⚠️ NotificationService failed (non-fatal): $e');
     }
 
-    // ── Call notifications (non-fatal) ──
     try {
       await CallNotificationService().initialize();
     } catch (e) {
       debugPrint('⚠️ CallNotificationService failed (non-fatal): $e');
     }
 
-    // ── FCM push token (non-fatal — fails on bad Play Services) ──
     try {
       final pushService = PushNotificationService();
       await pushService.initialize();
-      debugPrint('✅ Push notifications initialized');
     } catch (e) {
       debugPrint('⚠️ PushNotificationService failed (non-fatal): $e');
     }
 
-    // ── Connectivity monitor (non-fatal) ──
     try {
       ConnectivityService().initialize();
     } catch (e) {
       debugPrint('⚠️ ConnectivityService failed (non-fatal): $e');
     }
 
-    // ── Agora call service (non-fatal) ──
     try {
       CallService.initialize('8a2cea909f994b0d9e61146e99710277');
     } catch (e) {
       debugPrint('⚠️ CallService failed (non-fatal): $e');
     }
 
-    // ── Portrait lock ──
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -290,7 +281,7 @@ class ErrorApp extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// AUTH ROUTER — phone-first, offline-aware
+// AUTH ROUTER — checks login + routes
 // ═════════════════════════════════════════════════════════════════════════════
 class AuthRouter extends StatefulWidget {
   const AuthRouter({super.key});
@@ -318,11 +309,12 @@ class _AuthRouterState extends State<AuthRouter> {
   Future<void> _checkAuthState() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // ── 1. Firebase user (magic link verified) ──
+    // ═══════════════════════════════════════════════════════════════
+    // 1. ALREADY SIGNED IN → go to main app (or setup profile)
+    // ═══════════════════════════════════════════════════════════════
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) {
-      // Try Firestore check for profile completeness — but fall back to
-      // cached prefs if offline.
+      // Try Firestore for profile completeness
       bool complete = false;
       try {
         final userDoc = await FirebaseFirestore.instance
@@ -338,13 +330,14 @@ class _AuthRouterState extends State<AuthRouter> {
             (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
         complete = userDoc.exists && hasUsername && hasDisplayName;
       } catch (_) {
-        // Offline or timeout — check cached prefs
+        // Offline — check cached prefs
         final cachedUsername = prefs.getString('mock_username');
         final cachedName = prefs.getString('mock_display_name');
         complete = (cachedUsername?.isNotEmpty ?? false) &&
             (cachedName?.isNotEmpty ?? false);
       }
 
+      if (!mounted) return;
       setState(() {
         _targetScreen =
             complete ? const MainAppScreen() : const SetupProfileScreen();
@@ -353,7 +346,9 @@ class _AuthRouterState extends State<AuthRouter> {
       return;
     }
 
-    // ── 2. Cached login (offline-friendly) ──
+    // ═══════════════════════════════════════════════════════════════
+    // 2. Cached mock user (offline login)
+    // ═══════════════════════════════════════════════════════════════
     final cachedUserId = prefs.getString('mock_user_id');
     if (cachedUserId != null && cachedUserId.isNotEmpty) {
       final cachedUsername = prefs.getString('mock_username');
@@ -361,6 +356,7 @@ class _AuthRouterState extends State<AuthRouter> {
       final hasProfile = (cachedUsername?.isNotEmpty ?? false) &&
           (cachedName?.isNotEmpty ?? false);
 
+      if (!mounted) return;
       setState(() {
         _targetScreen =
             hasProfile ? const MainAppScreen() : const SetupProfileScreen();
@@ -369,11 +365,14 @@ class _AuthRouterState extends State<AuthRouter> {
       return;
     }
 
-    // ── 3. No user — check pending flow ──
+    // ═══════════════════════════════════════════════════════════════
+    // 3. Pending signup flow
+    // ═══════════════════════════════════════════════════════════════
     final pendingPhone = prefs.getString('pending_phone');
     final pendingEmail = prefs.getString('pending_email');
 
     if (pendingPhone == null) {
+      if (!mounted) return;
       setState(() {
         _targetScreen = const PhoneEntryScreen();
         _isChecking = false;
@@ -381,8 +380,19 @@ class _AuthRouterState extends State<AuthRouter> {
       return;
     }
 
+    if (pendingEmail == null) {
+      if (!mounted) return;
+      setState(() {
+        _targetScreen = const EmailEntryScreen();
+        _isChecking = false;
+      });
+      return;
+    }
+
+    // Both exist but no user — restart from phone
+    if (!mounted) return;
     setState(() {
-      _targetScreen = const EmailVerificationScreen();
+      _targetScreen = const PhoneEntryScreen();
       _isChecking = false;
     });
   }
@@ -594,7 +604,9 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
               '/': (_) => const AuthRouter(),
               '/terms': (_) => const TermsScreen(),
               '/phone_entry': (_) => const PhoneEntryScreen(),
-              '/email_verification': (_) => const EmailVerificationScreen(),
+              '/email_entry': (_) => const EmailEntryScreen(),
+              '/signin_passcode': (_) => const SigninPasscodeScreen(),
+              '/passcode_setup': (_) => const PasscodeSetupScreen(),
               '/setup_profile': (_) => const SetupProfileScreen(),
               '/main': (_) => const MainAppScreen(),
               '/chat': (_) => const ChatScreen(),
@@ -670,14 +682,12 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
 
     if (userId == null) return app;
 
-    // Ban check — wraps in try/catch so offline doesn't break the app
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
           .snapshots(),
       builder: (context, snapshot) {
-        // If we're offline or snapshot errored → just show the app
         if (snapshot.hasError) return app;
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -888,7 +898,7 @@ class _LockScreenState extends State<LockScreen> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PASSCODE ENTRY
+// PASSCODE ENTRY (app lock)
 // ═════════════════════════════════════════════════════════════════════════════
 class _PasscodeEntry extends StatefulWidget {
   final String correctPasscode;
@@ -1092,7 +1102,7 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// OFFLINE BANNER — single-value connectivity API
+// OFFLINE BANNER
 // ═════════════════════════════════════════════════════════════════════════════
 class OfflineBanner extends StatefulWidget {
   const OfflineBanner({super.key});
@@ -1159,7 +1169,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// CONNECTIVITY SERVICE — single-value API
+// CONNECTIVITY SERVICE
 // ═════════════════════════════════════════════════════════════════════════════
 class ConnectivityService {
   static final ConnectivityService _i = ConnectivityService._();
@@ -1189,7 +1199,7 @@ class ConnectivityService {
       final result = await Connectivity().checkConnectivity();
       return result != ConnectivityResult.none;
     } catch (_) {
-      return true; // assume online on error
+      return true;
     }
   }
 
