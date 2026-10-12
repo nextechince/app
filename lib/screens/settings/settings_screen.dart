@@ -1,420 +1,326 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
-import '../../utils/verified_badge.dart';
-import '../../services/cloudinary_service.dart';
 
-// ─── YOUR CLOUDINARY CONFIG ────────────────────────────────────────
-const String _cloudName = 'dn2mwp1lc';
-const String _uploadPreset = 'aura_chat';
-// ───────────────────────────────────────────────────────────────────
-
-class AppLocalizations {
-  static String currentLanguage = 'en';
-
-  static final Map<String, Map<String, String>> _translations = {
-    'en': {
-      'settings': 'Settings',
-      'account': 'Account',
-      'security_change_number': 'Security, change number',
-      'privacy': 'Privacy',
-      'block_contacts': 'Block contacts, disappearing messages',
-      'avatar': 'Avatar',
-      'create_edit_photo': 'Create, edit, profile photo',
-      'chats': 'Chats',
-      'theme_wallpapers': 'Theme, wallpapers, chat history',
-      'notifications': 'Notifications',
-      'message_group_call_tones': 'Message, group & call tones',
-      'storage_and_data': 'Storage and Data',
-      'network_usage': 'Network usage, auto-download',
-      'app_language': 'App Language',
-      'english_default': 'English (device default)',
-      'help': 'Help',
-      'help_center': 'Help center, contact us, privacy policy',
-      'invite_friends': 'Invite Friends',
-      'log_out': 'Log Out',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Select Language',
-      'cancel': 'Cancel',
-      'preferences': 'Preferences',
-    },
-    'es': {
-      'settings': 'Configuración',
-      'account': 'Cuenta',
-      'security_change_number': 'Seguridad, cambiar número',
-      'privacy': 'Privacidad',
-      'block_contacts': 'Bloquear contactos, mensajes temporales',
-      'avatar': 'Avatar',
-      'create_edit_photo': 'Crear, editar, foto de perfil',
-      'chats': 'Chats',
-      'theme_wallpapers': 'Tema, fondos, historial',
-      'notifications': 'Notificaciones',
-      'message_group_call_tones': 'Tono de mensajes, grupos y llamadas',
-      'storage_and_data': 'Almacenamiento y Datos',
-      'network_usage': 'Uso de red, descarga automática',
-      'app_language': 'Idioma',
-      'english_default': 'Español',
-      'help': 'Ayuda',
-      'help_center': 'Centro de ayuda, contacto, política',
-      'invite_friends': 'Invitar Amigos',
-      'log_out': 'Cerrar Sesión',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Seleccionar Idioma',
-      'cancel': 'Cancelar',
-      'preferences': 'Preferencias',
-    },
-    'fr': {
-      'settings': 'Paramètres',
-      'account': 'Compte',
-      'security_change_number': 'Sécurité, changer numéro',
-      'privacy': 'Confidentialité',
-      'block_contacts': 'Bloquer contacts, messages éphémères',
-      'avatar': 'Avatar',
-      'create_edit_photo': 'Créer, modifier, photo de profil',
-      'chats': 'Discussions',
-      'theme_wallpapers': 'Thème, fonds, historique',
-      'notifications': 'Notifications',
-      'message_group_call_tones': 'Sonneries messages, groupes, appels',
-      'storage_and_data': 'Stockage et Données',
-      'network_usage': 'Usage réseau, téléchargement auto',
-      'app_language': 'Langue',
-      'english_default': 'Français',
-      'help': 'Aide',
-      'help_center': 'Centre aide, contact, politique',
-      'invite_friends': 'Inviter des Amis',
-      'log_out': 'Déconnexion',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Choisir la Langue',
-      'cancel': 'Annuler',
-      'preferences': 'Préférences',
-    },
-    'ha': {
-      'settings': 'Saituna',
-      'account': 'Asusu',
-      'security_change_number': 'Tsaro, canza lamba',
-      'privacy': 'Sirri',
-      'block_contacts': 'Toshe lambobi, saƙonnin da suke ɓacewa',
-      'avatar': 'Hoton fuska',
-      'create_edit_photo': 'Ƙirƙira, gyara, hoton bayani',
-      'chats': 'Sadarwa',
-      'theme_wallpapers': 'Jigo, fentin fuska, tarihi',
-      'notifications': 'Sanarwa',
-      'message_group_call_tones': 'Sautin saƙo, ƙungiya & kira',
-      'storage_and_data': 'Majiya da Bayanai',
-      'network_usage': 'Amfani da hanyar sadarwa, sauke kai tsaye',
-      'app_language': 'Yaren App',
-      'english_default': 'Hausa',
-      'help': 'Taimako',
-      'help_center': 'Cibiyar taimako, tuntuɓa, manufofi',
-      'invite_friends': 'Gayyato Abokai',
-      'log_out': 'Fita',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Zaɓi Harshe',
-      'cancel': 'Soke',
-      'preferences': 'Zaɓuɓɓuka',
-    },
-    'yo': {
-      'settings': 'Ètò',
-      'account': 'Àkáòwò',
-      'security_change_number': 'Ààbò, yí nọ́mbà padà',
-      'privacy': 'Àṣírí',
-      'block_contacts': 'Dínà àwọn olùbáaṣepọ̀, àwọn ìròyìn tó ń lọ',
-      'avatar': 'Àwòrán',
-      'create_edit_photo': 'Ṣẹ̀dá, ṣàtúnṣe, àwòrán prófáìlì',
-      'chats': 'Ìtàkurọ̀sọ̀',
-      'theme_wallpapers': 'Àkọlé, àwòrán bàckgráùnd, ìtàn',
-      'notifications': 'Àlàrtì',
-      'message_group_call_tones': 'Ohùn ìròyìn, ẹgbẹ́ & ìpè',
-      'storage_and_data': 'Ibi ipamọ̀ àti Dátà',
-      'network_usage': 'Lò nẹ́twọ́kì, ìgbàsílẹ̀ fúnrarẹ̀',
-      'app_language': 'Èdè App',
-      'english_default': 'Yorùbá',
-      'help': 'Ìrànlọ́wọ́',
-      'help_center': 'Ilé ìrànlọ́wọ́, àbọ̀, òfin àṣírí',
-      'invite_friends': 'Pè Àwọn Ọ̀rẹ́',
-      'log_out': 'Jáde',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Yan Èdè',
-      'cancel': 'Fagilé',
-      'preferences': 'Àwọn àṣàyàn',
-    },
-    'ig': {
-      'settings': 'Ntọala',
-      'account': 'Akaụntụ',
-      'security_change_number': 'Nchekwa, ịgbanwe nọmba',
-      'privacy': 'Nzuzo',
-      'block_contacts': 'Gbochie ndị kọntaktị, ozi na-efu',
-      'avatar': 'Foto',
-      'create_edit_photo': 'Kepụta, dezie, foto profaịlụ',
-      'chats': 'Mkparịta ụka',
-      'theme_wallpapers': 'Isiokwu, ihe osise, akụkọ',
-      'notifications': 'Nziọkwà',
-      'message_group_call_tones': 'Ọkwa ozi, òtù & oku',
-      'storage_and_data': 'Nchekwa na Data',
-      'network_usage': 'Iji netwọk, ibudata onwe',
-      'app_language': 'Asụsụ App',
-      'english_default': 'Igbo',
-      'help': 'Enyemaka',
-      'help_center': 'Ụlọ enyemaka, kọntaktị, iwu nzuzo',
-      'invite_friends': 'Kpọọ Ndị Enyi',
-      'log_out': 'Pụọ',
-      'version': 'Luma Chat v1.0.0',
-      'select_language': 'Họrọ Asụsụ',
-      'cancel': 'Kagbuo',
-      'preferences': 'Mmasị',
-    },
-  };
-
-  static String get(String key) {
-    return _translations[currentLanguage]?[key] ??
-        _translations['en']?[key] ??
-        key;
-  }
-
-  static List<Map<String, String>> get supportedLanguages => [
-        {'code': 'en', 'name': 'English'},
-        {'code': 'es', 'name': 'Español'},
-        {'code': 'fr', 'name': 'Français'},
-        {'code': 'ha', 'name': 'Hausa'},
-        {'code': 'yo', 'name': 'Yorùbá'},
-        {'code': 'ig', 'name': 'Igbo'},
-      ];
-}
-
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+class SavedMessagesScreen extends StatefulWidget {
+  const SavedMessagesScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SavedMessagesScreen> createState() => _SavedMessagesScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  File? _newProfileImage;
-  bool _isUploading = false;
+class _SavedMessagesScreenState extends State<SavedMessagesScreen> {
+  final _searchController = TextEditingController();
+  final _noteController = TextEditingController();
+
+  List<Map<String, dynamic>> _items = [];
+  List<Map<String, dynamic>> _filtered = [];
+  String _filter = 'all';
+  String _query = '';
+  bool _loading = true;
+  String? _userId;
+
+  final List<Map<String, dynamic>> _filters = const [
+    {'key': 'all', 'label': 'All', 'icon': Icons.layers_outlined},
+    {'key': 'note', 'label': 'Notes', 'icon': Icons.edit_note},
+    {'key': 'text', 'label': 'Text', 'icon': Icons.short_text},
+    {'key': 'image', 'label': 'Photos', 'icon': Icons.image_outlined},
+    {'key': 'video', 'label': 'Videos', 'icon': Icons.videocam_outlined},
+    {
+      'key': 'file',
+      'label': 'Files',
+      'icon': Icons.insert_drive_file_outlined
+    },
+    {'key': 'audio', 'label': 'Voice', 'icon': Icons.mic_none},
+    {
+      'key': 'location',
+      'label': 'Locations',
+      'icon': Icons.location_on_outlined
+    },
+    {
+      'key': 'contact',
+      'label': 'Contacts',
+      'icon': Icons.contact_page_outlined
+    },
+  ];
 
   @override
   void initState() {
     super.initState();
-    _loadLanguage();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
 
-  Future<void> _loadLanguage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedLang = prefs.getString('app_language');
-    if (savedLang != null && mounted) {
-      setState(() => AppLocalizations.currentLanguage = savedLang);
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  void _init() {
+    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
+    _userId = auth.user?.uid ?? auth.mockUserId;
+    if (_userId == null) {
+      setState(() => _loading = false);
+      return;
     }
-  }
-
-  Future<void> _pickNewProfileImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 512,
-      maxHeight: 512,
-      imageQuality: 85,
-    );
-
-    if (picked == null) return;
-
-    setState(() {
-      _newProfileImage = File(picked.path);
-      _isUploading = true;
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(_userId)
+        .collection('saved')
+        .orderBy('saved_at', descending: true)
+        .limit(500)
+        .snapshots()
+        .listen((snap) {
+      _items = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      _applyFilters();
+      if (mounted) setState(() => _loading = false);
+    }, onError: (e) {
+      debugPrint('Saved messages load error: $e');
+      if (mounted) setState(() => _loading = false);
     });
-
-    await _uploadProfileImage();
   }
 
-  Future<void> _uploadProfileImage() async {
-    if (_newProfileImage == null) return;
-
-    try {
-      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
-      final userId = authProvider.user?.uid ?? authProvider.mockUserId;
-      if (userId == null) return;
-
-      // Delete old avatar
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      final currentAvatarUrl = userDoc.data()?['avatar_url'] as String?;
-
-      if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) {
-        await CloudinaryService.deleteFile(currentAvatarUrl);
+  void _applyFilters() {
+    _filtered = _items.where((item) {
+      final type = (item['media_type'] ?? 'text') as String;
+      if (_filter != 'all' && type != _filter) return false;
+      if (_query.isNotEmpty) {
+        final haystack = [
+          item['text'] ?? '',
+          item['from_sender'] ?? '',
+          item['from_chat'] ?? '',
+          item['file_name'] ?? '',
+        ].join(' ').toLowerCase();
+        if (!haystack.contains(_query.toLowerCase())) return false;
       }
-
-      final fileBytes = await _newProfileImage!.readAsBytes();
-      final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-      final uri = Uri.parse(
-        'https://api.cloudinary.com/v1_1/$_cloudName/image/upload',
-      );
-
-      final request = http.MultipartRequest('POST', uri)
-        ..fields['upload_preset'] = _uploadPreset
-        ..fields['public_id'] = 'luma_profiles/$userId/$fileName'
-        ..files.add(
-          http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
-        );
-
-      final response = await request.send();
-      final responseData = await response.stream.bytesToString();
-      final jsonData = jsonDecode(responseData);
-
-      if (response.statusCode != 200) {
-        throw Exception(
-            'Cloudinary error: ${jsonData['error']?['message'] ?? responseData}');
-      }
-
-      final publicUrl = jsonData['secure_url'] as String;
-
-      await FirebaseFirestore.instance.collection('users').doc(userId).set({
-        'avatar_url': publicUrl,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      await authProvider.updateProfile(photoUrl: publicUrl);
-
-      if (!mounted) return;
-      setState(() => _isUploading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${AppLocalizations.get('avatar')} updated!'),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isUploading = false);
-      debugPrint('Cloudinary upload error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to upload: $e')),
-      );
-    }
+      return true;
+    }).toList();
+    if (mounted) setState(() {});
   }
 
-  Future<void> _backupChats() async {
-    try {
-      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
-      final userId = authProvider.user?.uid ?? authProvider.mockUserId;
-      final userEmail = authProvider.user?.email;
-
-      if (userId == null) {
-        _showBackupError('Not authenticated');
-        return;
-      }
-
-      if (mounted) setState(() => _isUploading = true);
-
-      final chatsSnapshot = await FirebaseFirestore.instance
-          .collection('chats')
-          .where('participants', arrayContains: userId)
-          .get();
-
-      final backupData = <Map<String, dynamic>>[];
-
-      for (final chatDoc in chatsSnapshot.docs) {
-        final chatId = chatDoc.id;
-        final messagesSnapshot = await FirebaseFirestore.instance
-            .collection('chats')
-            .doc(chatId)
-            .collection('messages')
-            .orderBy('timestamp')
-            .get();
-
-        final messages = messagesSnapshot.docs.map((m) {
-          final data = m.data();
-          final ts = data['timestamp'];
-          return {
-            'id': m.id,
-            'sender_id': data['sender_id'],
-            'text': data['text'],
-            'timestamp':
-                ts is Timestamp ? ts.toDate().toIso8601String() : null,
-            'type': data['type'] ?? 'text',
-            'media_url': data['media_url'],
-          };
-        }).toList();
-
-        backupData.add({
-          'chat_id': chatId,
-          'participants': chatDoc.data()['participants'],
-          'messages': messages,
-        });
-      }
-
-      final jsonString = jsonEncode({
-        'exported_at': DateTime.now().toIso8601String(),
-        'user_id': userId,
-        'chats': backupData,
-      });
-
-      final tempDir = Directory.systemTemp;
-      final fileName =
-          'luma_backup_${DateTime.now().millisecondsSinceEpoch}.json';
-      final file = File('${tempDir.path}/$fileName');
-      await file.writeAsString(jsonString);
-
-      if (mounted) setState(() => _isUploading = false);
-
-      final emailBody = Uri.encodeComponent(
-        'Luma Chat Backup\n\n'
-        'Exported: ${DateTime.now().toIso8601String()}\n'
-        'Chats backed up: ${backupData.length}\n\n'
-        'Please attach the backup file from:\n${file.path}\n\n'
-        'To restore: Save this email and use Restore in Luma Chat settings.',
-      );
-
-      final emailSubject =
-          Uri.encodeComponent('Luma Chat Backup - ${DateTime.now().toLocal()}');
-      final emailUri =
-          Uri.parse('mailto:${userEmail ?? ''}?subject=$emailSubject&body=$emailBody');
-
-      if (await canLaunchUrl(emailUri)) {
-        await launchUrl(emailUri);
-      } else {
-        if (!mounted) return;
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Backup Ready'),
-            content: Text(
-              'Chat backup saved locally.\n\nFile: ${file.path}\n\n'
-              '${backupData.length} chats backed up.\n\n'
-              'Please manually email this file to yourself for safekeeping.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isUploading = false);
-      _showBackupError('Backup failed: $e');
-    }
+  String _formatTime(dynamic ts) {
+    if (ts == null) return '';
+    final d = ts is Timestamp ? ts.toDate() : DateTime.now();
+    return DateFormat('HH:mm').format(d);
   }
 
-  void _showBackupError(String message) {
+  String _formatDate(dynamic ts) {
+    if (ts == null) return '';
+    final d = ts is Timestamp ? ts.toDate() : DateTime.now();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yest = today.subtract(const Duration(days: 1));
+    final md = DateTime(d.year, d.month, d.day);
+    if (md == today) return 'Today';
+    if (md == yest) return 'Yesterday';
+    return DateFormat('MMM d, yyyy').format(d);
+  }
+
+  void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
   }
 
-  void _showLanguagePicker() {
+  // ═══════════════════════════════════════════════════════════════════════
+  // NOTES
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _openNewNote() async {
+    _noteController.clear();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) =>
+          _noteDialog(title: 'New Note', controller: _noteController),
+    );
+    if (saved == true &&
+        _noteController.text.trim().isNotEmpty &&
+        _userId != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('saved')
+            .add({
+          'text': _noteController.text.trim(),
+          'media_type': 'note',
+          'saved_at': FieldValue.serverTimestamp(),
+        });
+        _toast('Note saved');
+      } catch (e) {
+        _toast('Failed: $e');
+      }
+    }
+  }
+
+  Future<void> _openEditNote(Map<String, dynamic> item) async {
+    _noteController.text = item['text'] ?? '';
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) =>
+          _noteDialog(title: 'Edit Note', controller: _noteController),
+    );
+    if (saved == true &&
+        _noteController.text.trim().isNotEmpty &&
+        _userId != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('saved')
+            .doc(item['id'])
+            .update({
+          'text': _noteController.text.trim(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+        _toast('Note updated');
+      } catch (e) {
+        _toast('Failed: $e');
+      }
+    }
+  }
+
+  Widget _noteDialog({
+    required String title,
+    required TextEditingController controller,
+  }) {
+    return AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        maxLines: 5,
+        autofocus: true,
+        decoration: const InputDecoration(
+          hintText: 'Type your note, thought, or link...',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ITEM ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+  void _copyItem(Map<String, dynamic> item) {
+    final type = item['media_type'] ?? 'text';
+    String text;
+    if (type == 'location') {
+      text =
+          'https://www.google.com/maps/search/?api=1&query=${item['location_lat']},${item['location_lng']}';
+    } else {
+      text = (item['text'] ?? '') as String;
+    }
+    if (text.isEmpty) {
+      _toast('Nothing to copy');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: text));
+    _toast('Copied');
+  }
+
+  Future<void> _deleteItem(Map<String, dynamic> item) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete saved item?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && _userId != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('saved')
+            .doc(item['id'])
+            .delete();
+        _toast('Deleted');
+      } catch (e) {
+        _toast('Failed: $e');
+      }
+    }
+  }
+
+  Future<void> _clearAll() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear all saved?'),
+        content:
+            const Text('All saved messages will be permanently deleted.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && _userId != null) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_userId)
+            .collection('saved')
+            .get();
+        final batch = FirebaseFirestore.instance.batch();
+        for (final d in snap.docs) {
+          batch.delete(d.reference);
+        }
+        await batch.commit();
+        _toast('All cleared');
+      } catch (e) {
+        _toast('Failed: $e');
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // FORWARD
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _openForward(Map<String, dynamic> item) async {
+    if (_userId == null) return;
     final theme = Theme.of(context);
-    showModalBottomSheet(
+    final chatsSnap = await FirebaseFirestore.instance
+        .collection('chats')
+        .where('participants', arrayContains: _userId)
+        .get();
+    if (!mounted) return;
+
+    final targetChatId = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: theme.brightness == Brightness.dark
           ? const Color(0xFF1F1F1F)
@@ -422,492 +328,737 @@ class _SettingsScreenState extends State<SettingsScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (_) => SafeArea(
+      builder: (ctx) => SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: theme.dividerColor,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    AppLocalizations.get('select_language'),
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-              ...AppLocalizations.supportedLanguages.map((lang) {
-                final isSelected =
-                    AppLocalizations.currentLanguage == lang['code'];
-                return ListTile(
-                  leading: Icon(
-                    isSelected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    color: isSelected
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface.withOpacity(0.4),
-                  ),
-                  title: Text(
-                    lang['name']!,
-                    style: TextStyle(
-                      color: isSelected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurface,
-                      fontWeight:
-                          isSelected ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  onTap: () async {
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setString('app_language', lang['code']!);
-                    if (!mounted) return;
-                    setState(() {
-                      AppLocalizations.currentLanguage = lang['code']!;
-                    });
-                    Navigator.pop(context);
-                  },
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _logOut() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.get('log_out')),
-        content: const Text('Are you sure you want to log out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.get('cancel')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: Text(AppLocalizations.get('log_out')),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      final authProvider =
-          Provider.of<LumaAuthProvider>(context, listen: false);
-      await authProvider.signOut();
-      if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final authProvider = Provider.of<LumaAuthProvider>(context);
-    final username = authProvider.userName ?? 'Unknown';
-    final displayName = authProvider.displayName ?? username;
-    final email = authProvider.email ?? '';
-    final avatar = authProvider.userPhotoUrl;
-    final userVerified = isVerified(email);
-
-    final currentLang = AppLocalizations.supportedLanguages.firstWhere(
-      (l) => l['code'] == AppLocalizations.currentLanguage,
-      orElse: () => {'code': 'en', 'name': 'English'},
-    );
-
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      body: SafeArea(
-        bottom: false,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // App bar
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      AppLocalizations.get('settings'),
-                      style: theme.textTheme.titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    onPressed: () {},
-                  ),
-                ],
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              decoration: BoxDecoration(
+                color: theme.dividerColor,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 96),
-                children: [
-                  // ─── Profile header ───
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: _isUploading ? null : _pickNewProfileImage,
-                          child: Stack(
-                            children: [
-                              _buildAvatar(theme, avatar, _newProfileImage),
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.all(3),
-                                  decoration: BoxDecoration(
-                                    color: theme.colorScheme.primary,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: theme.scaffoldBackgroundColor,
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: _isUploading
-                                      ? const SizedBox(
-                                          width: 12,
-                                          height: 12,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(Icons.camera_alt,
-                                          size: 12, color: Colors.white),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      displayName,
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 17,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (userVerified) ...[
-                                    const SizedBox(width: 6),
-                                    const VerifiedBadge(
-                                        size: 14, showTooltip: false),
-                                  ],
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '@$username',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.55),
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                email,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.45),
-                                  fontSize: 13,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.qr_code,
-                              color: theme.colorScheme.onSurface
-                                  .withOpacity(0.7)),
-                          onPressed: () {},
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  Divider(height: 0.5, color: theme.dividerColor),
-
-                  // ─── Account ───
-                  _sectionTitle(theme, AppLocalizations.get('account')),
-                  _tile(
-                    theme,
-                    icon: Icons.key_outlined,
-                    title: AppLocalizations.get('account'),
-                    subtitle: AppLocalizations.get('security_change_number'),
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/account_settings'),
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.lock_outline,
-                    title: AppLocalizations.get('privacy'),
-                    subtitle: AppLocalizations.get('block_contacts'),
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/privacy_settings'),
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.face_outlined,
-                    title: AppLocalizations.get('avatar'),
-                    subtitle: AppLocalizations.get('create_edit_photo'),
-                    onTap: _pickNewProfileImage,
-                  ),
-
-                  Divider(height: 0.5, color: theme.dividerColor),
-
-                  // ─── Preferences ───
-                  _sectionTitle(theme, AppLocalizations.get('preferences')),
-                  _tile(
-                    theme,
-                    icon: Icons.chat_bubble_outline,
-                    title: AppLocalizations.get('chats'),
-                    subtitle: AppLocalizations.get('theme_wallpapers'),
-                    onTap: () => Navigator.pushNamed(context, '/appearance'),
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.notifications_none,
-                    title: AppLocalizations.get('notifications'),
-                    subtitle:
-                        AppLocalizations.get('message_group_call_tones'),
-                    onTap: () => Navigator.pushNamed(
-                        context, '/notifications_settings'),
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.storage_outlined,
-                    title: AppLocalizations.get('storage_and_data'),
-                    subtitle: AppLocalizations.get('network_usage'),
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/data_storage'),
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.language_outlined,
-                    title: AppLocalizations.get('app_language'),
-                    subtitle: currentLang['name']!,
-                    onTap: _showLanguagePicker,
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.backup_outlined,
-                    title: 'Backup Chats',
-                    subtitle: 'Export chat history to email',
-                    onTap: _backupChats,
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.restore_outlined,
-                    title: 'Restore Chats',
-                    subtitle: 'Import chat history from backup',
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/restore_chats'),
-                  ),
-
-                  Divider(height: 0.5, color: theme.dividerColor),
-
-                  // ─── Help ───
-                  _sectionTitle(theme, AppLocalizations.get('help')),
-                  _tile(
-                    theme,
-                    icon: Icons.help_outline,
-                    title: AppLocalizations.get('help'),
-                    subtitle: AppLocalizations.get('help_center'),
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('Help center coming soon')),
-                      );
-                    },
-                  ),
-                  _tile(
-                    theme,
-                    icon: Icons.people_outline,
-                    title: AppLocalizations.get('invite_friends'),
-                    onTap: () =>
-                        Navigator.pushNamed(context, '/invite_friends'),
-                  ),
-
-                  Divider(height: 0.5, color: theme.dividerColor),
-
-                  // ─── Log out ───
-                  ListTile(
-                    leading: Icon(Icons.logout,
-                        color: theme.colorScheme.error),
-                    title: Text(
-                      AppLocalizations.get('log_out'),
-                      style: TextStyle(
-                        color: theme.colorScheme.error,
-                        fontWeight: FontWeight.w500,
-                        fontSize: 15,
-                      ),
-                    ),
-                    onTap: _logOut,
-                  ),
-
-                  const SizedBox(height: 32),
-
-                  Center(
-                    child: Text(
-                      AppLocalizations.get('version'),
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface.withOpacity(0.3),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-                ],
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Forward to',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
               ),
+            ),
+            Flexible(
+              child: chatsSnap.docs.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Text(
+                        'No chats found',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.4),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: chatsSnap.docs.length,
+                      itemBuilder: (context, i) {
+                        final doc = chatsSnap.docs[i];
+                        final data = doc.data();
+                        final isGroup = data['type'] == 'group';
+                        final isChannel = data['type'] == 'channel';
+                        String name =
+                            (data['name'] ?? data['title'] ?? 'Chat')
+                                as String;
+                        if (!isGroup && !isChannel) {
+                          final participants = List<String>.from(
+                              data['participants'] ?? []);
+                          final otherId = participants.firstWhere(
+                              (id) => id != _userId,
+                              orElse: () => '');
+                          final pData =
+                              data['participants_data']?[otherId];
+                          if (pData != null) {
+                            name = pData['username'] ??
+                                pData['name'] ??
+                                name;
+                          }
+                        }
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: theme.colorScheme.primary
+                                .withOpacity(0.15),
+                            child: Icon(
+                              isGroup
+                                  ? Icons.group
+                                  : isChannel
+                                      ? Icons.campaign
+                                      : Icons.person,
+                              color: theme.colorScheme.primary,
+                              size: 20,
+                            ),
+                          ),
+                          title: Text(name),
+                          onTap: () => Navigator.pop(ctx, doc.id),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
       ),
     );
+    if (targetChatId != null) {
+      await _forwardTo(item, targetChatId);
+    }
   }
 
-  // ─── Helpers ───
-
-  Widget _buildAvatar(ThemeData theme, String? avatarUrl, File? localFile) {
-    const size = 72.0;
-
-    if (localFile != null) {
-      return ClipOval(
-        child: Image.file(localFile, width: size, height: size, fit: BoxFit.cover),
-      );
+  Future<void> _forwardTo(
+      Map<String, dynamic> item, String targetChatId) async {
+    try {
+      final ref = FirebaseFirestore.instance
+          .collection('chats')
+          .doc(targetChatId)
+          .collection('messages')
+          .doc();
+      final type = item['media_type'] ?? 'text';
+      await ref.set({
+        'id': ref.id,
+        'sender_id': _userId,
+        'type': type == 'note' ? 'text' : type,
+        'content': item['text'],
+        'media_url': item['media_url'],
+        'file_name': item['file_name'],
+        'file_size': item['file_size'],
+        'location_lat': item['location_lat'],
+        'location_lng': item['location_lng'],
+        'location_label': item['location_label'],
+        'contact': item['contact'],
+        'poll': item['poll'],
+        'forwarded_from': item['from_sender'] ?? 'Saved Messages',
+        'created_at': FieldValue.serverTimestamp(),
+        'is_read': false,
+        'is_edited': false,
+        'deleted_for_everyone': false,
+        'deleted_for': [],
+        'reactions': {},
+      });
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(targetChatId)
+          .update({
+        'last_message': '📤 Forwarded from Saved',
+        'last_message_at': FieldValue.serverTimestamp(),
+      });
+      _toast('Forwarded');
+    } catch (e) {
+      _toast('Forward failed: $e');
     }
+  }
 
-    if (avatarUrl == null || avatarUrl.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: theme.colorScheme.primary.withOpacity(0.15),
-        ),
-        child: Icon(Icons.person,
-            color: theme.colorScheme.primary, size: 34),
-      );
+  Future<void> _openLocation(double lat, double lng) async {
+    final uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    try {
+      final launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) _toast('Could not open map');
+    } catch (e) {
+      _toast('Could not open map');
     }
+  }
 
-    return ClipOval(
-      child: Image.network(
-        avatarUrl,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Container(
-            width: size,
-            height: size,
-            color: theme.colorScheme.primary.withOpacity(0.15),
-            child: const Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+  // ═══════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ═══════════════════════════════════════════════════════════════════════
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        elevation: 0,
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: theme.colorScheme.primary.withOpacity(0.15),
+              ),
+              child: Icon(Icons.bookmark,
+                  color: theme.colorScheme.primary, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Saved Messages',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                  Text(
+                    '${_items.length} item${_items.length != 1 ? 's' : ''}',
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface.withOpacity(0.4),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ),
             ),
-          );
-        },
-        errorBuilder: (_, __, ___) => Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: theme.colorScheme.primary.withOpacity(0.15),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.add, color: theme.colorScheme.primary),
+            onPressed: _openNewNote,
           ),
-          child: Icon(Icons.person,
-              color: theme.colorScheme.primary, size: 34),
-        ),
+          IconButton(
+            icon: Icon(Icons.more_vert,
+                color: theme.colorScheme.onSurface.withOpacity(0.7)),
+            onPressed: () {
+              showModalBottomSheet(
+                context: context,
+                backgroundColor: theme.brightness == Brightness.dark
+                    ? const Color(0xFF1F1F1F)
+                    : Colors.white,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                builder: (ctx) => SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: theme.dividerColor,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.edit_note,
+                              color: Color(0xFFD4A73A)),
+                          title: const Text('New Note'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _openNewNote();
+                          },
+                        ),
+                        ListTile(
+                          leading: Icon(Icons.delete_forever,
+                              color: theme.colorScheme.error),
+                          title: Text(
+                            'Clear All Saved',
+                            style: TextStyle(
+                                color: theme.colorScheme.error),
+                          ),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _clearAll();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Search
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: TextField(
+              controller: _searchController,
+              style: TextStyle(
+                  color: theme.colorScheme.onSurface, fontSize: 13),
+              onChanged: (v) {
+                _query = v;
+                _applyFilters();
+              },
+              decoration: InputDecoration(
+                hintText: 'Search saved messages...',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: () {
+                          _searchController.clear();
+                          _query = '';
+                          _applyFilters();
+                        },
+                      )
+                    : null,
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+
+          // Filters
+          SizedBox(
+            height: 40,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: _filters.length,
+              itemBuilder: (context, i) {
+                final f = _filters[i];
+                final selected = _filter == f['key'];
+                return Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() => _filter = f['key']);
+                      _applyFilters();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? theme.colorScheme.primary.withOpacity(0.15)
+                            : theme.colorScheme.onSurface
+                                .withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: selected
+                              ? theme.colorScheme.primary
+                                  .withOpacity(0.4)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            f['icon'],
+                            size: 14,
+                            color: selected
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurface
+                                    .withOpacity(0.55),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            f['label'],
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: selected
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface
+                                      .withOpacity(0.55),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          Expanded(
+            child: _loading
+                ? Center(
+                    child: CircularProgressIndicator(
+                        color: theme.colorScheme.primary))
+                : _items.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(30),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.bookmark_border,
+                                size: 54,
+                                color: theme.colorScheme.primary
+                                    .withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No saved messages yet',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.6),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Long-press any message in a chat and tap Save, or tap + above to create a note.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.4),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : _filtered.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No matches',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface
+                                    .withOpacity(0.4),
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(
+                                12, 0, 12, 20),
+                            itemCount: _filtered.length,
+                            itemBuilder: (context, index) {
+                              final item = _filtered[index];
+                              final showDate = index == 0 ||
+                                  _formatDate(item['saved_at']) !=
+                                      _formatDate(
+                                          _filtered[index - 1]['saved_at']);
+                              return Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.stretch,
+                                children: [
+                                  if (showDate)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 10),
+                                      child: Center(
+                                        child: Text(
+                                          _formatDate(item['saved_at']),
+                                          style: TextStyle(
+                                            color: theme
+                                                .colorScheme.onSurface
+                                                .withOpacity(0.35),
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  _buildSavedItem(theme, item),
+                                  const SizedBox(height: 6),
+                                ],
+                              );
+                            },
+                          ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _sectionTitle(ThemeData theme, String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Text(
-        title.toUpperCase(),
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: theme.colorScheme.onSurface.withOpacity(0.55),
-          letterSpacing: 0.6,
-        ),
-      ),
-    );
-  }
+  Widget _buildSavedItem(ThemeData theme, Map<String, dynamic> item) {
+    final type = (item['media_type'] ?? 'text') as String;
+    final isNote = type == 'note';
 
-  Widget _tile(
-    ThemeData theme, {
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Icon(icon,
-          color: theme.colorScheme.onSurface.withOpacity(0.75)),
-      title: Text(
-        title,
-        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-      ),
-      subtitle: subtitle != null
-          ? Padding(
-              padding: const EdgeInsets.only(top: 2),
+    Widget content;
+    switch (type) {
+      case 'note':
+      case 'text':
+        content = Text(
+          item['text'] ?? '',
+          style: const TextStyle(fontSize: 13, height: 1.4),
+        );
+        break;
+      case 'image':
+        content = ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: CachedNetworkImage(
+            imageUrl: item['media_url'] ?? '',
+            height: 160,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            errorWidget: (_, __, ___) => Container(
+              height: 160,
+              color: theme.colorScheme.onSurface.withOpacity(0.05),
+              child: const Icon(Icons.broken_image, size: 32),
+            ),
+          ),
+        );
+        break;
+      case 'video':
+        content = Container(
+          height: 140,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Center(
+            child: Icon(Icons.play_circle_fill,
+                color: Colors.white70, size: 40),
+          ),
+        );
+        break;
+      case 'file':
+        content = Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(Icons.insert_drive_file,
+                color: theme.colorScheme.primary, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              item['file_name'] ?? 'File',
+              style: const TextStyle(fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ]);
+        break;
+      case 'audio':
+        content = Row(children: [
+          Icon(Icons.mic,
+              color: theme.colorScheme.primary, size: 18),
+          const SizedBox(width: 10),
+          const Text('Voice message', style: TextStyle(fontSize: 12)),
+        ]);
+        break;
+      case 'location':
+        content = GestureDetector(
+          onTap: () => _openLocation(
+            (item['location_lat'] ?? 0).toDouble(),
+            (item['location_lng'] ?? 0).toDouble(),
+          ),
+          child: Row(children: [
+            Icon(Icons.location_on,
+                color: theme.colorScheme.primary, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
               child: Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                item['location_label'] ?? 'Shared location',
+                style: const TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ]),
+        );
+        break;
+      case 'contact':
+        final c = Map<String, dynamic>.from(item['contact'] ?? {});
+        content = Row(children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor:
+                theme.colorScheme.primary.withOpacity(0.2),
+            backgroundImage: c['avatar_url'] != null
+                ? NetworkImage(c['avatar_url'])
+                : null,
+            child: c['avatar_url'] == null
+                ? Text(
+                    (c['display_name'] ?? 'U')[0].toString().toUpperCase(),
+                    style: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontSize: 12,
+                    ),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              c['display_name'] ?? c['username'] ?? 'Contact',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ]);
+        break;
+      default:
+        content = Text(
+          item['text'] ?? '',
+          style: const TextStyle(fontSize: 13),
+        );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isNote
+            ? const Color(0xFFD4A73A).withOpacity(0.05)
+            : theme.colorScheme.onSurface.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withOpacity(0.06),
+        ),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: (isNote
+                          ? const Color(0xFFD4A73A)
+                          : theme.colorScheme.primary)
+                      .withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isNote ? Icons.edit : Icons.bookmark,
+                  size: 10,
+                  color: isNote
+                      ? const Color(0xFFD4A73A)
+                      : theme.colorScheme.primary,
                 ),
               ),
-            )
-          : null,
-      trailing: Icon(
-        Icons.chevron_right,
-        color: theme.colorScheme.onSurface.withOpacity(0.35),
-        size: 20,
+              const SizedBox(width: 8),
+              if (isNote)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD4A73A).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'NOTE',
+                    style: TextStyle(
+                      color: Color(0xFFD4A73A),
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                )
+              else ...[
+                if (item['from_sender'] != null)
+                  Flexible(
+                    child: Text(
+                      item['from_sender'],
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface
+                            .withOpacity(0.7),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (item['from_chat'] != null) ...[
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      '· ${item['from_chat']}',
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface
+                            .withOpacity(0.4),
+                        fontSize: 10,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ],
+              const Spacer(),
+              Text(
+                _formatTime(item['saved_at']),
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.4),
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          content,
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.only(top: 8),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: theme.colorScheme.onSurface.withOpacity(0.06),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                if (isNote)
+                  _actionBtn(theme, Icons.edit, 'Edit',
+                      () => _openEditNote(item)),
+                _actionBtn(theme, Icons.copy, 'Copy',
+                    () => _copyItem(item)),
+                _actionBtn(theme, Icons.share, 'Forward',
+                    () => _openForward(item)),
+                _actionBtn(theme, Icons.delete, 'Delete',
+                    () => _deleteItem(item),
+                    color: theme.colorScheme.error),
+              ],
+            ),
+          ),
+        ],
       ),
-      onTap: onTap,
+    );
+  }
+
+  Widget _actionBtn(
+    ThemeData theme,
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
+    final c = color ?? theme.colorScheme.primary;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: c),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
