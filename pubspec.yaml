@@ -64,7 +64,7 @@ dependencies:
   # Calls
   agora_rtc_engine: ^6.3.0
   permission_handler: ^11.3.0
-
+  country_code_picker: ^3.0.0
   # Storage & Preferences
   shared_preferences: ^2.2.2
 
