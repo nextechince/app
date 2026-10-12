@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../providers/chat_provider.dart';
-import '../../services/notification_service.dart';
 import '../../utils/verified_badge.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -34,8 +33,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuraAuthProvider>(context);
-    final chatProvider = Provider.of<ChatProvider>(context);
+    final theme = Theme.of(context);
+    final authProvider = Provider.of<LumaAuthProvider>(context);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
 
     if (userId == null) {
@@ -43,7 +42,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('chats')
@@ -55,7 +54,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
             return Center(
               child: Text(
                 'Error: ${snapshot.error}',
-                style: const TextStyle(color: Colors.white70),
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                ),
               ),
             );
           }
@@ -67,48 +68,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
           final chats = snapshot.data!.docs;
 
           if (chats.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline,
-                    size: 64,
-                    color: Colors.white.withOpacity(0.2),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No messages yet',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.4),
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Start a conversation!',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.3),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            );
+            return _emptyState(theme);
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: 4),
             itemCount: chats.length,
             itemBuilder: (context, index) {
               final chat = chats[index].data() as Map<String, dynamic>;
               chat['id'] = chats[index].id;
 
-              final isGroupOrChannel = ['group', 'channel'].contains(chat['type']);
+              final isGroupOrChannel =
+                  ['group', 'channel'].contains(chat['type']);
               final lastMessage = chat['last_message'] ?? '';
               final lastMessageType = chat['last_message_type'] ?? 'text';
 
-              // FIXED: Robust timestamp parsing
               DateTime? lastMessageAt;
               if (chat['last_message_at'] != null) {
                 final val = chat['last_message_at'];
@@ -154,6 +128,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  Widget _emptyState(ThemeData theme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.chat_bubble_outline,
+              size: 72,
+              color: theme.colorScheme.onSurface.withOpacity(0.15),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No messages yet',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Start a conversation!',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GROUP / CHANNEL TILE
+  // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildGroupOrChannelTile(
     BuildContext context,
     Map<String, dynamic> chat,
@@ -163,23 +172,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
     int unreadCount,
     bool isPinned,
   ) {
+    final theme = Theme.of(context);
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    // FIX: some chats store the display name under 'title' instead of 'name'
-    // (this same fallback already exists in chat_screen.dart's forward-message
-    // feature for the same 'chats' collection) — checking both here prevents
-    // this tile from falling back to "Unknown" for those chats.
     final name = chat['name'] ?? chat['title'] ?? 'Unknown';
     final avatarUrl = chat['avatar_url'] as String?;
     final type = chat['type'] as String? ?? 'group';
-    final createdByEmail = chat['created_by_email'] as String?; // FIXED: phone → email
+    final createdByEmail = chat['created_by_email'] as String?;
 
-    // FIX: Removed the outer GestureDetector(onLongPress: ...) that was wrapping
-    // Slidable. Slidable installs its own horizontal drag-gesture recognizers to
-    // detect swipes, and it competes with a wrapping GestureDetector's long-press
-    // recognizer in the same gesture arena — Slidable tends to win that arena, so
-    // the outer onLongPress was silently never firing. ListTile has a built-in
-    // onLongPress parameter handled by the same InkWell that already handles
-    // onTap (which was working), so it survives being inside Slidable correctly.
     return Slidable(
       key: ValueKey(chat['id']),
       endActionPane: ActionPane(
@@ -187,109 +186,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
         children: [
           SlidableAction(
             onPressed: (_) => chatProvider.archiveChat(chat['id']),
-            backgroundColor: Colors.blue,
+            backgroundColor: theme.colorScheme.primary,
             foregroundColor: Colors.white,
             icon: Icons.archive,
             label: 'Archive',
           ),
           SlidableAction(
             onPressed: (_) => _showDeleteDialog(context, chat['id']),
-            backgroundColor: Colors.red,
+            backgroundColor: theme.colorScheme.error,
             foregroundColor: Colors.white,
             icon: Icons.delete,
             label: 'Delete',
           ),
         ],
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        onLongPress: () => _showChatOptions(context, chat, true),
-        leading: Stack(
-          children: [
-            _buildAvatar(avatarUrl, name, type == 'channel'),
-            if (isPinned)
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF8B5CF6),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.push_pin,
-                    size: 10,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: VerifiedUsername(
-                username: name,
-                email: createdByEmail, // FIXED: phoneNumber → email
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-                badgeSize: 14,
-                spacing: 4,
-              ),
-            ),
-            if (lastMessageAt != null)
-              Text(
-                _formatChatListTime(lastMessageAt),
-                style: TextStyle(
-                  color: unreadCount > 0
-                      ? const Color(0xFF8B5CF6)
-                      : Colors.white.withOpacity(0.4),
-                  fontSize: 12,
-                ),
-              ),
-          ],
-        ),
-        subtitle: Row(
-          children: [
-            Expanded(
-              child: Text(
-                _getMessagePreview(lastMessage, lastMessageType),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: unreadCount > 0
-                      ? Colors.white.withOpacity(0.8)
-                      : Colors.white.withOpacity(0.5),
-                  fontSize: 13,
-                  fontWeight: unreadCount > 0
-                      ? FontWeight.w500
-                      : FontWeight.normal,
-                ),
-              ),
-            ),
-            if (unreadCount > 0)
-              Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  unreadCount > 99 ? '99+' : '$unreadCount',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-          ],
-        ),
+      child: InkWell(
         onTap: () {
           if (type == 'channel') {
             Navigator.pushNamed(
@@ -312,10 +223,129 @@ class _ChatListScreenState extends State<ChatListScreen> {
             );
           }
         },
+        onLongPress: () => _showChatOptions(context, chat, true),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Stack(
+                children: [
+                  _buildAvatar(avatarUrl, name, type == 'channel'),
+                  if (isPinned)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: theme.scaffoldBackgroundColor,
+                            width: 2,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.push_pin,
+                          size: 10,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: VerifiedUsername(
+                            username: name,
+                            email: createdByEmail,
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurface,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 16,
+                            ),
+                            badgeSize: 14,
+                            spacing: 4,
+                          ),
+                        ),
+                        if (lastMessageAt != null)
+                          Text(
+                            _formatChatListTime(lastMessageAt),
+                            style: TextStyle(
+                              color: unreadCount > 0
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface
+                                      .withOpacity(0.4),
+                              fontSize: 12,
+                              fontWeight: unreadCount > 0
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _getMessagePreview(
+                                lastMessage, lastMessageType),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: unreadCount > 0
+                                  ? theme.colorScheme.onSurface
+                                      .withOpacity(0.75)
+                                  : theme.colorScheme.onSurface
+                                      .withOpacity(0.55),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        if (unreadCount > 0)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            constraints: const BoxConstraints(minWidth: 22),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary,
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            child: Text(
+                              unreadCount > 999 ? '999+' : '$unreadCount',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DIRECT CHAT TILE
+  // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildDirectChatTile(
     BuildContext context,
     Map<String, dynamic> chat,
@@ -325,11 +355,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
     int unreadCount,
     bool isPinned,
   ) {
+    final theme = Theme.of(context);
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
 
-    // Get the other participant
     final participants = List<String>.from(chat['participants'] ?? []);
     final otherUserId = participants.firstWhere(
       (id) => id != userId,
@@ -339,26 +370,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (otherUserId.isEmpty) return const SizedBox.shrink();
 
     return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('users').doc(otherUserId).get(),
+      future: FirebaseFirestore.instance
+          .collection('users')
+          .doc(otherUserId)
+          .get(),
       builder: (context, userSnapshot) {
-        if (!userSnapshot.hasData) {
-          return const SizedBox.shrink();
-        }
+        if (!userSnapshot.hasData) return const SizedBox.shrink();
 
-        final userData = userSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-        // FIX: added the 'name' fallback — chats.html's fetchUserData checks
-        // display_name, username, AND name, but this tile only checked the
-        // first two, so users whose doc stores the name under 'name' showed
-        // as "Unknown" here even though the website resolved them correctly.
-        final displayName = userData['display_name'] ?? userData['username'] ?? userData['name'] ?? 'Unknown';
+        final userData =
+            userSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+        final displayName = userData['display_name'] ??
+            userData['username'] ??
+            userData['name'] ??
+            'Unknown';
         final avatarUrl = userData['avatar_url'] as String?;
-        final email = userData['email'] as String?; // FIXED: phone → email
+        final email = userData['email'] as String?;
         final isOnline = userData['is_online'] as bool? ?? false;
 
-        // FIX: Removed the outer GestureDetector(onLongPress: ...) that was
-        // wrapping Slidable — same gesture-arena conflict as in
-        // _buildGroupOrChannelTile above. onLongPress now lives directly on the
-        // ListTile so it's handled by the same InkWell as onTap.
         return Slidable(
           key: ValueKey(chat['id']),
           endActionPane: ActionPane(
@@ -366,126 +394,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
             children: [
               SlidableAction(
                 onPressed: (_) => chatProvider.archiveChat(chat['id']),
-                backgroundColor: Colors.blue,
+                backgroundColor: theme.colorScheme.primary,
                 foregroundColor: Colors.white,
                 icon: Icons.archive,
                 label: 'Archive',
               ),
               SlidableAction(
                 onPressed: (_) => _showDeleteDialog(context, chat['id']),
-                backgroundColor: Colors.red,
+                backgroundColor: theme.colorScheme.error,
                 foregroundColor: Colors.white,
                 icon: Icons.delete,
                 label: 'Delete',
               ),
             ],
           ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            onLongPress: () => _showDirectChatOptions(context, chat['id'], displayName),
-            leading: Stack(
-              children: [
-                _buildAvatar(avatarUrl, displayName, false),
-                if (isOnline)
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF0A0A0F),
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-                if (isPinned)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF8B5CF6),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.push_pin,
-                        size: 10,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            title: Row(
-              children: [
-                Expanded(
-                  child: VerifiedUsername(
-                    username: displayName,
-                    email: email, // FIXED: phoneNumber → email
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                    ),
-                    badgeSize: 14,
-                    spacing: 4,
-                  ),
-                ),
-                if (lastMessageAt != null)
-                  Text(
-                    _formatChatListTime(lastMessageAt),
-                    style: TextStyle(
-                      color: unreadCount > 0
-                          ? const Color(0xFF8B5CF6)
-                          : Colors.white.withOpacity(0.4),
-                      fontSize: 12,
-                    ),
-                  ),
-              ],
-            ),
-            subtitle: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _getMessagePreview(lastMessage, lastMessageType),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: unreadCount > 0
-                          ? Colors.white.withOpacity(0.8)
-                          : Colors.white.withOpacity(0.5),
-                      fontSize: 13,
-                      fontWeight: unreadCount > 0
-                          ? FontWeight.w500
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ),
-                if (unreadCount > 0)
-                  Container(
-                    margin: const EdgeInsets.only(left: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF8B5CF6),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      unreadCount > 99 ? '99+' : '$unreadCount',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+          child: InkWell(
             onTap: () {
               Navigator.pushNamed(
                 context,
@@ -498,32 +421,179 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 },
               );
             },
+            onLongPress: () => _showDirectChatOptions(
+                context, chat['id'], displayName.toString()),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Stack(
+                    children: [
+                      _buildAvatar(avatarUrl, displayName.toString(), false),
+                      if (isOnline)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4FAE4F),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.scaffoldBackgroundColor,
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (isPinned)
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.scaffoldBackgroundColor,
+                                width: 2,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.push_pin,
+                              size: 10,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: VerifiedUsername(
+                                username: displayName.toString(),
+                                email: email,
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 16,
+                                ),
+                                badgeSize: 14,
+                                spacing: 4,
+                              ),
+                            ),
+                            if (lastMessageAt != null)
+                              Text(
+                                _formatChatListTime(lastMessageAt),
+                                style: TextStyle(
+                                  color: unreadCount > 0
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.onSurface
+                                          .withOpacity(0.4),
+                                  fontSize: 12,
+                                  fontWeight: unreadCount > 0
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _getMessagePreview(
+                                    lastMessage, lastMessageType),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: unreadCount > 0
+                                      ? theme.colorScheme.onSurface
+                                          .withOpacity(0.75)
+                                      : theme.colorScheme.onSurface
+                                          .withOpacity(0.55),
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            if (unreadCount > 0)
+                              Container(
+                                margin: const EdgeInsets.only(left: 8),
+                                constraints:
+                                    const BoxConstraints(minWidth: 22),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(11),
+                                ),
+                                child: Text(
+                                  unreadCount > 999
+                                      ? '999+'
+                                      : '$unreadCount',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         );
       },
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AVATAR
+  // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildAvatar(String? url, String name, bool isChannel) {
+    final theme = Theme.of(context);
+
     if (url != null && url.isNotEmpty) {
       return CircleAvatar(
-        radius: 26,
+        radius: 27,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
         backgroundImage: NetworkImage(url),
         onBackgroundImageError: (_, __) {},
       );
     }
 
     return CircleAvatar(
-      radius: 26,
-      backgroundColor: const Color(0xFF1a103c),
+      radius: 27,
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
       child: Icon(
         isChannel ? Icons.campaign : Icons.person,
-        color: const Color(0xFF8B5CF6),
+        color: theme.colorScheme.primary,
         size: 24,
       ),
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
   String _getMessagePreview(String message, String type) {
     switch (type) {
       case 'image':
@@ -541,168 +611,188 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  // FIXED: Improved time formatting
   String _formatChatListTime(DateTime? dateTime) {
     if (dateTime == null) return '';
 
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    final messageDate =
+        DateTime(dateTime.year, dateTime.month, dateTime.day);
     final diffDays = today.difference(messageDate).inDays;
 
-    // Today
     if (diffDays == 0) {
       final diffMinutes = now.difference(dateTime).inMinutes;
-      if (diffMinutes < 1) {
-        return 'Now';
-      } else if (diffMinutes < 60) {
-        return '${diffMinutes}m';
-      } else {
-        // Show time for anything older than 1 hour today
-        final hour = dateTime.hour.toString().padLeft(2, '0');
-        final minute = dateTime.minute.toString().padLeft(2, '0');
-        return '$hour:$minute';
-      }
-    }
-    // Yesterday
-    else if (diffDays == 1) {
+      if (diffMinutes < 1) return 'Now';
+      if (diffMinutes < 60) return '${diffMinutes}m';
+      final hour = dateTime.hour.toString().padLeft(2, '0');
+      final minute = dateTime.minute.toString().padLeft(2, '0');
+      return '$hour:$minute';
+    } else if (diffDays == 1) {
       return 'Yesterday';
-    }
-    // Within last 7 days
-    else if (diffDays < 7) {
+    } else if (diffDays < 7) {
       const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return days[dateTime.weekday - 1];
-    }
-    // This year
-    else if (dateTime.year == now.year) {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    } else if (dateTime.year == now.year) {
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
       return '${months[dateTime.month - 1]} ${dateTime.day}';
-    }
-    // Different year
-    else {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    } else {
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
       return '${months[dateTime.month - 1]} ${dateTime.day}, ${dateTime.year}';
     }
   }
 
-  void _showChatOptions(BuildContext context, Map<String, dynamic> chat, bool isGroup) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SHEETS
+  // ═══════════════════════════════════════════════════════════════════════════
+  void _showChatOptions(
+      BuildContext context, Map<String, dynamic> chat, bool isGroup) {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(2),
+      builder: (_) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.push_pin, color: Color(0xFF8B5CF6)),
-              title: const Text('Pin Chat', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                Provider.of<ChatProvider>(context, listen: false)
-                    .togglePinChat(chat['id']);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.archive, color: Colors.blue),
-              title: const Text('Archive', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                Provider.of<ChatProvider>(context, listen: false)
-                    .archiveChat(chat['id']);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete Chat', style: TextStyle(color: Colors.red)),
-              onTap: () {
-                Navigator.pop(context);
-                _showDeleteDialog(context, chat['id']);
-              },
-            ),
-            if (isGroup)
               ListTile(
-                leading: const Icon(Icons.exit_to_app, color: Colors.orange),
-                title: const Text('Leave Group', style: TextStyle(color: Colors.orange)),
+                leading: Icon(Icons.push_pin,
+                    color: theme.colorScheme.onSurface.withOpacity(0.75)),
+                title: const Text('Pin Chat'),
                 onTap: () {
                   Navigator.pop(context);
-                  _showLeaveDialog(context, chat['id']);
+                  Provider.of<ChatProvider>(context, listen: false)
+                      .togglePinChat(chat['id']);
                 },
               ),
-          ],
+              ListTile(
+                leading: Icon(Icons.archive_outlined,
+                    color: theme.colorScheme.onSurface.withOpacity(0.75)),
+                title: const Text('Archive'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Provider.of<ChatProvider>(context, listen: false)
+                      .archiveChat(chat['id']);
+                },
+              ),
+              ListTile(
+                leading:
+                    Icon(Icons.delete_outline, color: theme.colorScheme.error),
+                title: Text('Delete Chat',
+                    style: TextStyle(color: theme.colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showDeleteDialog(context, chat['id']);
+                },
+              ),
+              if (isGroup)
+                ListTile(
+                  leading: const Icon(Icons.exit_to_app, color: Color(0xFFE0954A)),
+                  title: const Text('Leave Group',
+                      style: TextStyle(color: Color(0xFFE0954A))),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showLeaveDialog(context, chat['id']);
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  void _showDirectChatOptions(BuildContext context, String chatId, String userName) {
+  void _showDirectChatOptions(
+      BuildContext context, String chatId, String userName) {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(2),
+      builder: (_) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.push_pin, color: Color(0xFF8B5CF6)),
-              title: const Text('Pin Chat', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                Provider.of<ChatProvider>(context, listen: false)
-                    .togglePinChat(chatId);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.archive, color: Colors.blue),
-              title: const Text('Archive', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                Provider.of<ChatProvider>(context, listen: false)
-                    .archiveChat(chatId);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete Chat', style: TextStyle(color: Colors.red)),
-              onTap: () {
-                Navigator.pop(context);
-                _showDeleteDialog(context, chatId);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.block, color: Colors.orange),
-              title: const Text('Block User', style: TextStyle(color: Colors.orange)),
-              onTap: () {
-                Navigator.pop(context);
-                _showBlockDialog(context, chatId, userName);
-              },
-            ),
-          ],
+              ListTile(
+                leading: Icon(Icons.push_pin,
+                    color: theme.colorScheme.onSurface.withOpacity(0.75)),
+                title: const Text('Pin Chat'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Provider.of<ChatProvider>(context, listen: false)
+                      .togglePinChat(chatId);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.archive_outlined,
+                    color: theme.colorScheme.onSurface.withOpacity(0.75)),
+                title: const Text('Archive'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Provider.of<ChatProvider>(context, listen: false)
+                      .archiveChat(chatId);
+                },
+              ),
+              ListTile(
+                leading:
+                    Icon(Icons.delete_outline, color: theme.colorScheme.error),
+                title: Text('Delete Chat',
+                    style: TextStyle(color: theme.colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showDeleteDialog(context, chatId);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.block, color: Color(0xFFE0954A)),
+                title: const Text('Block User',
+                    style: TextStyle(color: Color(0xFFE0954A))),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showBlockDialog(context, chatId, userName);
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -711,25 +801,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
   void _showDeleteDialog(BuildContext context, String chatId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Delete Chat?', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Chat?'),
         content: const Text(
           'This will delete the chat from your list. Messages will still be visible to other participants.',
-          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               Provider.of<ChatProvider>(context, listen: false)
                   .deleteChat(chatId);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style:
+                TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
           ),
         ],
@@ -740,25 +829,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
   void _showLeaveDialog(BuildContext context, String chatId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Leave Group?', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave Group?'),
         content: const Text(
           'You will no longer receive messages from this group.',
-          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               Provider.of<ChatProvider>(context, listen: false)
                   .leaveChat(chatId);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFE0954A)),
             child: const Text('Leave'),
           ),
         ],
@@ -766,27 +854,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  void _showBlockDialog(BuildContext context, String chatId, String userName) {
+  void _showBlockDialog(
+      BuildContext context, String chatId, String userName) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: Text('Block $userName?', style: const TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: Text('Block $userName?'),
         content: Text(
           'You will no longer receive messages from $userName.',
-          style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () {
-              Navigator.pop(context);
-              // Implement block functionality
+              Navigator.pop(ctx);
+              // TODO: implement block
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFE0954A)),
             child: const Text('Block'),
           ),
         ],
