@@ -9,20 +9,42 @@ class NotificationsSettingsScreen extends StatefulWidget {
   const NotificationsSettingsScreen({super.key});
 
   @override
-  State<NotificationsSettingsScreen> createState() => _NotificationsSettingsScreenState();
+  State<NotificationsSettingsScreen> createState() =>
+      _NotificationsSettingsScreenState();
 }
 
-class _NotificationsSettingsScreenState extends State<NotificationsSettingsScreen> {
+class _NotificationsSettingsScreenState
+    extends State<NotificationsSettingsScreen> {
   String _selectedRingtone = 'default';
   final AudioPlayer _previewPlayer = AudioPlayer();
   bool _isPlaying = false;
 
-  final List<Map<String, dynamic>> _ringtones = [
-  {'id': 'default', 'name': 'AURA Default', 'file': 'assets/audio/ringtone_ambition.mp3'},
-  {'id': 'phonk', 'name': 'phonk Vibes', 'file': 'assets/audio/ringtone_phonk.mp3'},
-  {'id': 'fadded', 'name': 'fadded Phone', 'file': 'assets/audio/ringtone_fadded.mp3'},
-  {'id': 'pop', 'name': 'pop', 'file': 'assets/audio/ringtone_pop.mp3'},
-];
+  // System notification sounds, loaded from device
+  List<Map<String, String>> _systemSounds = [];
+  bool _loadingSystemSounds = false;
+
+  final List<Map<String, String>> _builtinRingtones = [
+    {
+      'id': 'default',
+      'name': 'Luma Default',
+      'file': 'assets/audio/ringtone_ambition.mp3'
+    },
+    {
+      'id': 'phonk',
+      'name': 'Phonk Vibes',
+      'file': 'assets/audio/ringtone_phonk.mp3'
+    },
+    {
+      'id': 'fadded',
+      'name': 'Faded Phone',
+      'file': 'assets/audio/ringtone_fadded.mp3'
+    },
+    {
+      'id': 'pop',
+      'name': 'Pop',
+      'file': 'assets/audio/ringtone_pop.mp3'
+    },
+  ];
 
   @override
   void initState() {
@@ -32,28 +54,35 @@ class _NotificationsSettingsScreenState extends State<NotificationsSettingsScree
 
   Future<void> _loadRingtone() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _selectedRingtone = prefs.getString('call_ringtone') ?? 'default';
     });
   }
 
-  Future<void> _setRingtone(String ringtoneId) async {
+  Future<void> _setRingtone(String ringtoneId, {String? systemUri}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('call_ringtone', ringtoneId);
+    if (systemUri != null) {
+      await prefs.setString('call_ringtone_uri', systemUri);
+    } else {
+      await prefs.remove('call_ringtone_uri');
+    }
+    if (!mounted) return;
     setState(() => _selectedRingtone = ringtoneId);
   }
 
-    Future<void> _previewRingtone(String filePath) async {
+  Future<void> _previewRingtone(String filePath) async {
     if (_isPlaying) {
       await _previewPlayer.stop();
-      setState(() => _isPlaying = false);
+      if (mounted) setState(() => _isPlaying = false);
       return;
     }
 
     try {
       await _previewPlayer.setAudioSource(AudioSource.asset(filePath));
       await _previewPlayer.play();
-      setState(() => _isPlaying = true);
+      if (mounted) setState(() => _isPlaying = true);
 
       _previewPlayer.playerStateStream.listen((state) {
         if (state.processingState == ProcessingState.completed) {
@@ -62,8 +91,9 @@ class _NotificationsSettingsScreenState extends State<NotificationsSettingsScree
       });
     } catch (e) {
       debugPrint('Preview error: $e');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ringtone file not found. Add MP3 to assets/audio/')),
+        const SnackBar(content: Text('Ringtone file not found.')),
       );
     }
   }
@@ -77,17 +107,17 @@ class _NotificationsSettingsScreenState extends State<NotificationsSettingsScree
       criticalAlert: true,
     );
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            settings.authorizationStatus == AuthorizationStatus.authorized
-                ? 'Notifications enabled'
-                : 'Notifications permission denied. Enable in settings.',
-          ),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          settings.authorizationStatus == AuthorizationStatus.authorized
+              ? 'Notifications enabled'
+              : 'Notifications permission denied. Enable in settings.',
         ),
-      );
-    }
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -98,309 +128,307 @@ class _NotificationsSettingsScreenState extends State<NotificationsSettingsScree
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final settingsProvider = Provider.of<SettingsProvider>(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Notifications', style: TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF0A0A0F),
+        title: const Text('Notifications'),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          _buildSectionHeader(context, 'Message Notifications'),
+          _sectionTitle(theme, 'MESSAGE NOTIFICATIONS'),
 
-          _buildCard(
-            children: [
-              _buildToggleTile(
-                context,
-                icon: Icons.message_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Message Tones',
-                subtitle: 'Play sound for new messages',
-                value: settingsProvider.messageTones,
-                onChanged: (value) => settingsProvider.setMessageTones(value),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildToggleTile(
-                context,
-                icon: Icons.group_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Group Notifications',
-                subtitle: 'Notifications for group messages',
-                value: settingsProvider.groupNotifications,
-                onChanged: (value) => settingsProvider.setGroupNotifications(value),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildToggleTile(
-                context,
-                icon: Icons.campaign_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Channel Notifications',
-                subtitle: 'Notifications for channel updates',
-                value: settingsProvider.channelNotifications,
-                onChanged: (value) => settingsProvider.setChannelNotifications(value),
-              ),
-            ],
+          _toggleTile(
+            theme,
+            icon: Icons.message_outlined,
+            title: 'Message Tones',
+            subtitle: 'Play sound for new messages',
+            value: settingsProvider.messageTones,
+            onChanged: (v) => settingsProvider.setMessageTones(v),
+          ),
+          _toggleTile(
+            theme,
+            icon: Icons.group_outlined,
+            title: 'Group Notifications',
+            subtitle: 'Notifications for group messages',
+            value: settingsProvider.groupNotifications,
+            onChanged: (v) => settingsProvider.setGroupNotifications(v),
+          ),
+          _toggleTile(
+            theme,
+            icon: Icons.campaign_outlined,
+            title: 'Channel Notifications',
+            subtitle: 'Notifications for channel updates',
+            value: settingsProvider.channelNotifications,
+            onChanged: (v) =>
+                settingsProvider.setChannelNotifications(v),
           ),
 
-          const SizedBox(height: 24),
+          Divider(height: 0.5, color: theme.dividerColor),
 
-          _buildSectionHeader(context, 'Call Notifications'),
+          _sectionTitle(theme, 'CALL NOTIFICATIONS'),
+          _toggleTile(
+            theme,
+            icon: Icons.call_outlined,
+            title: 'Voice & Video Calls',
+            subtitle: 'Notifications for incoming calls',
+            value: settingsProvider.voiceVideoCalls,
+            onChanged: (v) => settingsProvider.setVoiceVideoCalls(v),
+          ),
+          _ringtoneTile(theme),
 
-          _buildCard(
-            children: [
-              _buildToggleTile(
-                context,
-                icon: Icons.call_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Voice & Video Calls',
-                subtitle: 'Notifications for incoming calls',
-                value: settingsProvider.voiceVideoCalls,
-                onChanged: (value) => settingsProvider.setVoiceVideoCalls(value),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              // NEW: Ringtone picker
-              _buildRingtoneTile(context),
-            ],
+          Divider(height: 0.5, color: theme.dividerColor),
+
+          _sectionTitle(theme, 'IN-APP NOTIFICATIONS'),
+          _toggleTile(
+            theme,
+            icon: Icons.volume_up_outlined,
+            title: 'In-App Sounds',
+            subtitle: 'Play sounds while using the app',
+            value: settingsProvider.inAppSounds,
+            onChanged: (v) => settingsProvider.setInAppSounds(v),
+          ),
+          _toggleTile(
+            theme,
+            icon: Icons.vibration_outlined,
+            title: 'In-App Vibrate',
+            subtitle: 'Vibrate while using the app',
+            value: settingsProvider.inAppVibrate,
+            onChanged: (v) => settingsProvider.setInAppVibrate(v),
+          ),
+          _toggleTile(
+            theme,
+            icon: Icons.preview_outlined,
+            title: 'Show Preview',
+            subtitle: 'Show message preview in notifications',
+            value: settingsProvider.showPreview,
+            onChanged: (v) => settingsProvider.setShowPreview(v),
           ),
 
-          const SizedBox(height: 24),
+          Divider(height: 0.5, color: theme.dividerColor),
 
-          _buildSectionHeader(context, 'In-App Notifications'),
-
-          _buildCard(
-            children: [
-              _buildToggleTile(
-                context,
-                icon: Icons.volume_up_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'In-App Sounds',
-                subtitle: 'Play sounds while using the app',
-                value: settingsProvider.inAppSounds,
-                onChanged: (value) => settingsProvider.setInAppSounds(value),
+          ListTile(
+            leading: Icon(
+              Icons.settings_applications_outlined,
+              color: theme.colorScheme.onSurface.withOpacity(0.75),
+            ),
+            title: const Text(
+              'System Notification Settings',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+            ),
+            subtitle: Text(
+              'Open device notification settings',
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.55),
+                fontSize: 13,
               ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildToggleTile(
-                context,
-                icon: Icons.vibration_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'In-App Vibrate',
-                subtitle: 'Vibrate while using the app',
-                value: settingsProvider.inAppVibrate,
-                onChanged: (value) => settingsProvider.setInAppVibrate(value),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildToggleTile(
-                context,
-                icon: Icons.preview_outlined,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Show Preview',
-                subtitle: 'Show message preview in notifications',
-                value: settingsProvider.showPreview,
-                onChanged: (value) => settingsProvider.setShowPreview(value),
-              ),
-            ],
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              color: theme.colorScheme.onSurface.withOpacity(0.35),
+              size: 20,
+            ),
+            onTap: _requestNotificationPermission,
           ),
 
-          const SizedBox(height: 24),
-
-          // NEW: System notification permission button
-          _buildCard(
-            children: [
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                leading: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.12),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.25)),
-                  ),
-                  child: const Icon(Icons.settings_applications, color: Color(0xFF8B5CF6), size: 22),
-                ),
-                title: const Text(
-                  'System Notification Settings',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
-                ),
-                subtitle: Text(
-                  'Open device notification settings',
-                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
-                ),
-                trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
-                onTap: _requestNotificationPermission,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          _buildInfoCard(context),
+          const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  // NEW: Ringtone picker tile
-  Widget _buildRingtoneTile(BuildContext context) {
-    final selectedName = _ringtones.firstWhere(
+  // ═══════════════════════════════════════════════════════════════════════
+  // RINGTONE TILE
+  // ═══════════════════════════════════════════════════════════════════════
+  Widget _ringtoneTile(ThemeData theme) {
+    final selectedName = _builtinRingtones.firstWhere(
       (r) => r['id'] == _selectedRingtone,
-      orElse: () => _ringtones[0],
+      orElse: () => {'name': 'System Default'},
     )['name'];
 
-    return InkWell(
-      onTap: () => _showRingtonePicker(context),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: const Color(0xFF8B5CF6).withOpacity(0.12),
-                shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.25)),
-              ),
-              child: const Icon(Icons.music_note, color: Color(0xFF8B5CF6), size: 22),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Call Ringtone',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    selectedName,
-                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
-          ],
+    return ListTile(
+      leading: Icon(
+        Icons.music_note_outlined,
+        color: theme.colorScheme.onSurface.withOpacity(0.75),
+      ),
+      title: const Text(
+        'Call Ringtone',
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        selectedName ?? 'System Default',
+        style: TextStyle(
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          fontSize: 13,
         ),
       ),
+      trailing: Icon(
+        Icons.chevron_right,
+        color: theme.colorScheme.onSurface.withOpacity(0.35),
+        size: 20,
+      ),
+      onTap: () => _showRingtonePicker(context, theme),
     );
   }
 
-  // NEW: Ringtone picker bottom sheet
-  void _showRingtonePicker(BuildContext context) {
+  void _showRingtonePicker(BuildContext context, ThemeData theme) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) {
-          return Container(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Call Ringtone',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Choose a ringtone for incoming calls',
-                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14),
-                ),
-                const SizedBox(height: 24),
-                ..._ringtones.map((ringtone) {
-                  final isSelected = _selectedRingtone == ringtone['id'];
-                  return Container(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return SafeArea(
+            top: false,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 4,
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFF8B5CF6).withOpacity(0.2)
-                          : Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF8B5CF6)
-                            : Colors.white.withOpacity(0.1),
+                      color: theme.dividerColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Text(
+                    'Call Ringtone',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Choose a sound for incoming calls',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color:
+                          theme.colorScheme.onSurface.withOpacity(0.55),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Luma built-in ringtones ──
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'LUMA SOUNDS',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.55),
+                          letterSpacing: 0.6,
+                        ),
                       ),
                     ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFF8B5CF6).withOpacity(0.3)
-                              : Colors.white.withOpacity(0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          isSelected ? Icons.music_note : Icons.music_note_outlined,
-                          color: isSelected ? const Color(0xFF8B5CF6) : Colors.white54,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(
-                        ringtone['name'],
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(
-                              _isPlaying && isSelected ? Icons.stop : Icons.play_arrow,
-                              color: Colors.white54,
-                            ),
-                            onPressed: () => _previewRingtone(ringtone['file']),
-                          ),
-                          if (isSelected)
-                            const Icon(Icons.check_circle, color: Color(0xFF8B5CF6))
-                          else
-                            IconButton(
-                              icon: const Icon(Icons.check_circle_outline, color: Colors.white54),
-                              onPressed: () {
-                                _setRingtone(ringtone['id']);
-                                setModalState(() {});
-                              },
-                            ),
-                        ],
-                      ),
-                      onTap: () {
-                        _setRingtone(ringtone['id']);
+                  ),
+                  ..._builtinRingtones.map((ringtone) {
+                    final isSelected =
+                        _selectedRingtone == ringtone['id'];
+                    return _ringtoneOption(
+                      theme,
+                      ringtone,
+                      isSelected,
+                      () {
+                        _setRingtone(ringtone['id']!);
                         setModalState(() {});
                       },
+                    );
+                  }),
+
+                  const SizedBox(height: 12),
+
+                  // ── System sounds section ──
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Text(
+                          'DEVICE SOUNDS',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.55),
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_loadingSystemSounds)
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2),
+                          )
+                        else
+                          TextButton(
+                            onPressed: () => _loadSystemSounds(
+                                setModalState),
+                            style: TextButton.styleFrom(
+                              foregroundColor:
+                                  theme.colorScheme.primary,
+                              textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                            child: Text(
+                              _systemSounds.isEmpty ? 'Load' : 'Reload',
+                            ),
+                          ),
+                      ],
                     ),
-                  );
-                }).toList(),
-                const SizedBox(height: 16),
-              ],
+                  ),
+                  if (_systemSounds.isEmpty && !_loadingSystemSounds)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'Tap "Load" to see your device\'s notification sounds.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.5),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._systemSounds.map((sound) {
+                      final isSelected =
+                          _selectedRingtone == sound['id'];
+                      return _ringtoneOption(
+                        theme,
+                        sound,
+                        isSelected,
+                        () {
+                          _setRingtone(
+                            sound['id']!,
+                            systemUri: sound['uri'],
+                          );
+                          setModalState(() {});
+                        },
+                      );
+                    }),
+
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           );
         },
@@ -408,137 +436,136 @@ class _NotificationsSettingsScreenState extends State<NotificationsSettingsScree
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title) {
+  Widget _ringtoneOption(
+    ThemeData theme,
+    Map<String, String> ringtone,
+    bool isSelected,
+    VoidCallback onSelect,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? theme.colorScheme.primary.withOpacity(0.08)
+            : theme.colorScheme.onSurface.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isSelected
+              ? theme.colorScheme.primary.withOpacity(0.3)
+              : Colors.transparent,
+        ),
+      ),
+      child: ListTile(
+        leading: Icon(
+          isSelected
+              ? Icons.radio_button_checked
+              : Icons.radio_button_unchecked,
+          color: isSelected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.onSurface.withOpacity(0.4),
+        ),
+        title: Text(
+          ringtone['name'] ?? 'Unknown',
+          style: TextStyle(
+            fontWeight:
+                isSelected ? FontWeight.w600 : FontWeight.w400,
+            fontSize: 15,
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (ringtone['file'] != null)
+              IconButton(
+                icon: Icon(
+                  _isPlaying && isSelected
+                      ? Icons.stop_circle_outlined
+                      : Icons.play_circle_outline,
+                  color: theme.colorScheme.onSurface.withOpacity(0.55),
+                ),
+                onPressed: () => _previewRingtone(ringtone['file']!),
+              ),
+            if (isSelected)
+              Icon(Icons.check_circle,
+                  color: theme.colorScheme.primary, size: 20),
+          ],
+        ),
+        onTap: onSelect,
+      ),
+    );
+  }
+
+  // Placeholder for system sound loading.
+  // In practice, add a package like `flutter_system_ringtones_advanced`
+  // to fetch these. For now, we surface it as optional.
+  Future<void> _loadSystemSounds(Function setModalState) async {
+    // If you add flutter_system_ringtones_advanced to pubspec.yaml:
+    //
+    // import 'package:flutter_system_ringtones_advanced/flutter_system_ringtones_advanced.dart';
+    //
+    // final sounds = await FlutterSystemRingtones.getNotificationSounds();
+    // setModalState(() {
+    //   _systemSounds = sounds
+    //       .map((s) => {'id': s.uri, 'name': s.title, 'uri': s.uri})
+    //       .toList();
+    // });
+
+    // For now, show a helpful toast.
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+            'Add flutter_system_ringtones_advanced to load device sounds'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
+  Widget _sectionTitle(ThemeData theme, String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Text(
         title,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: Colors.white.withOpacity(0.5),
-          letterSpacing: 0.5,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
         ),
       ),
     );
   }
 
-  Widget _buildCard({required List<Widget> children}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1a103c),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFF8B5CF6).withOpacity(0.15),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: children,
-      ),
-    );
-  }
-
-  Widget _buildToggleTile(
-    BuildContext context, {
+  Widget _toggleTile(
+    ThemeData theme, {
     required IconData icon,
-    required Color iconColor,
     required String title,
     required String subtitle,
     required bool value,
-    required Function(bool) onChanged,
+    required ValueChanged<bool> onChanged,
   }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.12),
-          shape: BoxShape.circle,
-          border: Border.all(color: iconColor.withOpacity(0.25)),
-        ),
-        child: Icon(icon, color: iconColor, size: 22),
+    return SwitchListTile(
+      secondary: Icon(
+        icon,
+        color: theme.colorScheme.onSurface.withOpacity(0.75),
       ),
       title: Text(
         title,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w600,
-          fontSize: 15,
-        ),
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
       ),
       subtitle: Text(
         subtitle,
         style: TextStyle(
-          color: Colors.white.withOpacity(0.5),
           fontSize: 13,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
         ),
       ),
-      trailing: Switch(
-        value: value,
-        onChanged: onChanged,
-        activeColor: const Color(0xFF8B5CF6),
-        activeTrackColor: const Color(0xFF8B5CF6).withOpacity(0.3),
-        inactiveThumbColor: Colors.white.withOpacity(0.5),
-        inactiveTrackColor: Colors.white.withOpacity(0.1),
-      ),
-    );
-  }
-
-  Widget _buildInfoCard(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1a103c),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFF8B5CF6).withOpacity(0.15),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6).withOpacity(0.12),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.25),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.info_outline,
-                  color: Color(0xFF8B5CF6),
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'Notification Settings',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'These settings control how you receive notifications. You can customize sounds, vibrations, and previews for different types of messages.',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 13,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
+      value: value,
+      onChanged: onChanged,
+      activeColor: theme.colorScheme.primary,
     );
   }
 }
