@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 
 class AccountSettingsScreen extends StatefulWidget {
   const AccountSettingsScreen({super.key});
@@ -12,216 +12,135 @@ class AccountSettingsScreen extends StatefulWidget {
 class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   bool _isLoading = false;
 
+  void _toast(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuraAuthProvider>(context);
+    final theme = Theme.of(context);
+    final authProvider = Provider.of<LumaAuthProvider>(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Account', style: TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF0A0A0F),
+        title: const Text('Account'),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
       ),
       body: ListView(
         children: [
-          _buildSectionHeader(context, 'Account Settings'),
+          _sectionTitle(theme, 'ACCOUNT SETTINGS'),
 
-          _buildCard(
-            children: [
-              _buildListTile(
-                icon: Icons.security,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Security',
-                subtitle: 'Two-step verification, passcode',
-                onTap: () => Navigator.pushNamed(context, '/security'),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildListTile(
-                icon: Icons.phone,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Change Number',
-                subtitle: authProvider.phoneNumber ?? 'Not set',
-                onTap: () => _showChangeNumberDialog(context),
-              ),
-              const Divider(height: 1, color: Color(0xFF2A1A4E), indent: 72),
-              _buildListTile(
-                icon: Icons.email,
-                iconColor: const Color(0xFF06B6D4),
-                title: 'Change Email',
-                subtitle: authProvider.email ?? 'Not set',
-                onTap: () => _showChangeEmailDialog(context),
-              ),
-            ],
+          _tile(
+            theme,
+            icon: Icons.security_outlined,
+            title: 'Security',
+            subtitle: 'Two-step verification, passcode',
+            onTap: () => Navigator.pushNamed(context, '/security'),
+          ),
+          _tile(
+            theme,
+            icon: Icons.phone_outlined,
+            title: 'Change Number',
+            subtitle: authProvider.phoneNumber ?? 'Not set',
+            onTap: () => _showChangeNumberDialog(context),
+          ),
+          _tile(
+            theme,
+            icon: Icons.email_outlined,
+            title: 'Change Email',
+            subtitle: authProvider.email ?? 'Not set',
+            onTap: () => _showChangeEmailDialog(context),
           ),
 
-          const SizedBox(height: 24),
+          Divider(height: 0.5, color: theme.dividerColor),
 
-          _buildCard(
-            children: [
-              _buildListTile(
-                icon: Icons.delete_outline,
-                iconColor: Colors.redAccent,
-                title: 'Delete Account',
-                subtitle: 'Permanently delete your account',
-                titleColor: Colors.redAccent,
-                showTrailing: false,
-                onTap: () => _showDeleteAccountDialog(context),
-              ),
-            ],
+          _dangerTile(
+            theme,
+            icon: Icons.delete_outline,
+            title: 'Delete Account',
+            subtitle: 'Permanently delete your account',
+            onTap: () => _showDeleteAccountDialog(context),
           ),
+
+          const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: Colors.white.withOpacity(0.5),
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCard({required List<Widget> children}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF1a103c),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: const Color(0xFF8B5CF6).withOpacity(0.15),
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: children,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildListTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-    Color iconColor = const Color(0xFF06B6D4),
-    Color titleColor = Colors.white,
-    bool showTrailing = true,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.12),
-          shape: BoxShape.circle,
-          border: Border.all(color: iconColor.withOpacity(0.25)),
-        ),
-        child: Icon(icon, color: iconColor, size: 22),
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          color: titleColor,
-          fontWeight: FontWeight.w600,
-          fontSize: 15,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(
-          color: Colors.white.withOpacity(0.5),
-          fontSize: 13,
-        ),
-      ),
-      trailing: showTrailing
-          ? Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.3), size: 20)
-          : null,
-      onTap: onTap,
-    );
-  }
-
-  // ==================== CHANGE NUMBER ====================
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHANGE NUMBER
+  // ═══════════════════════════════════════════════════════════════════════
   void _showChangeNumberDialog(BuildContext context) {
     final controller = TextEditingController();
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: const Color(0xFF8B5CF6).withOpacity(0.2)),
-        ),
-        title: const Text(
-          'Change Phone Number',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Change Phone Number'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Current: ${authProvider.phoneNumber ?? "Not set"}',
-              style: TextStyle(color: Colors.white.withOpacity(0.5)),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Current: ${authProvider.phoneNumber ?? "Not set"}',
+                style: TextStyle(
+                  color: Theme.of(ctx)
+                      .colorScheme
+                      .onSurface
+                      .withOpacity(0.6),
+                  fontSize: 13,
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
               keyboardType: TextInputType.phone,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
+              autofocus: true,
+              decoration: const InputDecoration(
                 hintText: 'New phone number',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFF8B5CF6)),
-                ),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () async {
               final newPhone = controller.text.trim();
               if (newPhone.isEmpty) return;
 
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               setState(() => _isLoading = true);
 
-              final success = await authProvider.changePhoneNumber(newPhone);
+              final success =
+                  await authProvider.changePhoneNumber(newPhone);
+              if (!mounted) return;
               setState(() => _isLoading = false);
 
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success ? 'Phone number updated' : authProvider.error ?? 'Failed'),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
-                );
-              }
+              _toast(
+                success
+                    ? 'Phone number updated'
+                    : (authProvider.error ?? 'Failed'),
+                error: !success,
+              );
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
             child: const Text('Change'),
           ),
         ],
@@ -229,124 +148,123 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
-  // ==================== CHANGE EMAIL ====================
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHANGE EMAIL
+  // ═══════════════════════════════════════════════════════════════════════
   void _showChangeEmailDialog(BuildContext context) {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final theme = Theme.of(context);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final currentEmail = authProvider.email;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: const Color(0xFF8B5CF6).withOpacity(0.2)),
-        ),
-        title: const Text(
-          'Change Email',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Change Email'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Current: ${currentEmail ?? "Not set"}',
-              style: TextStyle(color: Colors.white.withOpacity(0.5)),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'To change your email, you must verify your current email first.',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _showVerifyOldEmailDialog(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF8B5CF6),
-                minimumSize: const Size(double.infinity, 48),
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                fontSize: 13,
               ),
-              child: const Text('Verify Current Email'),
             ),
             const SizedBox(height: 12),
+            Text(
+              'To change your email, you must verify your current email first.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showVerifyOldEmailDialog(context);
+                },
+                child: const Text('Verify Current Email'),
+              ),
+            ),
+            const SizedBox(height: 8),
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pop(ctx);
                 _showLostEmailDialog(context);
               },
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFE0954A),
+              ),
               child: const Text(
                 'Lost access to email?',
-                style: TextStyle(color: Colors.orange, fontSize: 13),
+                style: TextStyle(fontSize: 13),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
         ],
       ),
     );
   }
 
-  // ==================== VERIFY OLD EMAIL ====================
+  // ═══════════════════════════════════════════════════════════════════════
+  // VERIFY OLD EMAIL
+  // ═══════════════════════════════════════════════════════════════════════
   void _showVerifyOldEmailDialog(BuildContext context) {
+    final theme = Theme.of(context);
     final codeController = TextEditingController();
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final email = authProvider.email;
 
     if (email == null || email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No email on file'), backgroundColor: Colors.red),
-      );
+      _toast('No email on file', error: true);
       return;
     }
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Verify Email', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Verify Email'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               'Enter OTP sent to $email',
-              style: TextStyle(color: Colors.white.withOpacity(0.5)),
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                fontSize: 13,
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: codeController,
               keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
+              autofocus: true,
+              decoration: const InputDecoration(
                 hintText: '6-digit code',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () {
-              // TODO: Verify OTP with backend
-              Navigator.pop(context);
+              // TODO: verify OTP with backend
+              Navigator.pop(ctx);
               _showEnterNewEmailDialog(context);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
             child: const Text('Verify'),
           ),
         ],
@@ -354,55 +272,48 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
-  // ==================== ENTER NEW EMAIL ====================
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENTER NEW EMAIL
+  // ═══════════════════════════════════════════════════════════════════════
   void _showEnterNewEmailDialog(BuildContext context) {
     final controller = TextEditingController();
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('New Email', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('New Email'),
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.emailAddress,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
+          autofocus: true,
+          decoration: const InputDecoration(
             hintText: 'new@email.com',
-            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-            filled: true,
-            fillColor: Colors.white.withOpacity(0.05),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () async {
               final newEmail = controller.text.trim();
               if (newEmail.isEmpty || !newEmail.contains('@')) return;
 
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               setState(() => _isLoading = true);
 
               final success = await authProvider.changeEmail(newEmail);
+              if (!mounted) return;
               setState(() => _isLoading = false);
 
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success ? 'Email updated' : authProvider.error ?? 'Failed'),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
-                );
-              }
+              _toast(
+                success ? 'Email updated' : (authProvider.error ?? 'Failed'),
+                error: !success,
+              );
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
             child: const Text('Update'),
           ),
         ],
@@ -410,58 +321,54 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
-  // ==================== LOST EMAIL REPORT ====================
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOST EMAIL REPORT
+  // ═══════════════════════════════════════════════════════════════════════
   void _showLostEmailDialog(BuildContext context) {
+    final theme = Theme.of(context);
     final reasonController = TextEditingController();
     final phoneController = TextEditingController();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      builder: (ctx) => AlertDialog(
         title: const Text(
           'Lost Email Access',
-          style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Color(0xFFE0954A)),
         ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Report to AURA Support',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              Text(
+                'Report to Luma Support',
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
               Text(
-                'Send a report to supportaurachat@gmail.com. Include your phone number and reason.',
-                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                'Send a report to supportlumachat@gmail.com. Include your phone number and reason.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.6),
+                  height: 1.4,
+                ),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: phoneController,
                 keyboardType: TextInputType.phone,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Your phone number',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.05),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: reasonController,
                 maxLines: 3,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Why do you need to change email?',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.05),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ],
@@ -469,31 +376,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () {
               final phone = phoneController.text.trim();
               final reason = reasonController.text.trim();
 
               if (phone.isEmpty || reason.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Fill all fields'), backgroundColor: Colors.red),
-                );
+                _toast('Fill all fields', error: true);
                 return;
               }
 
-              // TODO: Send report to backend/support email
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Report sent to support. We will review and contact you.'),
-                  backgroundColor: Colors.green,
-                ),
+              // TODO: send report to backend/support email
+              Navigator.pop(ctx);
+              _toast(
+                'Report sent to support. We will review and contact you.',
               );
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFE0954A),
+            ),
             child: const Text('Send Report'),
           ),
         ],
@@ -501,68 +405,133 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // DELETE ACCOUNT
+  // ═══════════════════════════════════════════════════════════════════════
   void _showDeleteAccountDialog(BuildContext context) {
+    final theme = Theme.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: const Color(0xFF8B5CF6).withOpacity(0.2)),
-        ),
-        title: const Text(
+      builder: (ctx) => AlertDialog(
+        title: Text(
           'Delete Account?',
-          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+          style: TextStyle(color: theme.colorScheme.error),
         ),
-        content: Text(
+        content: const Text(
           'This will permanently delete your account and all data. This cannot be undone.',
-          style: TextStyle(color: Colors.white.withOpacity(0.6)),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          Container(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Colors.redAccent, Color(0xFFFF6B6B)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(12),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final authProvider =
+                  Provider.of<LumaAuthProvider>(context, listen: false);
+              final success = await authProvider.deleteAccount();
+              if (!context.mounted) return;
+              if (success) {
+                Navigator.pushNamedAndRemoveUntil(
+                    context, '/', (route) => false);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                        authProvider.error ?? 'Deletion failed'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.error,
             ),
-            child: TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-                final success = await authProvider.deleteAccount();
-                if (context.mounted) {
-                  if (success) {
-                    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: const Color(0xFF1a103c),
-                        content: Text(
-                          authProvider.error ?? 'Deletion failed',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    );
-                  }
-                }
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Delete', style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
+            child: const Text('Delete'),
           ),
         ],
       ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
+  Widget _sectionTitle(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon,
+          color: theme.colorScheme.onSurface.withOpacity(0.75)),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.55),
+                fontSize: 13,
+              ),
+            )
+          : null,
+      trailing: Icon(
+        Icons.chevron_right,
+        color: theme.colorScheme.onSurface.withOpacity(0.35),
+        size: 20,
+      ),
+      onTap: onTap,
+    );
+  }
+
+  Widget _dangerTile(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: theme.colorScheme.error),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w500,
+          color: theme.colorScheme.error,
+        ),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.55),
+                fontSize: 13,
+              ),
+            )
+          : null,
+      onTap: onTap,
     );
   }
 }
