@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../providers/chat_provider.dart';
 import '../../services/cloudinary_service.dart';
 import '../../services/invitation_service.dart';
@@ -29,11 +29,6 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
   List<Map<String, dynamic>> _searchResults = [];
   String? _generatedLink;
 
-  static const Color _bgDark = Color(0xFF0A0A0F);
-  static const Color _bgCard = Color(0xFF1a103c);
-  static const Color _purple = Color(0xFF8B5CF6);
-  static const Color _cyan = Color(0xFF06B6D4);
-
   @override
   void dispose() {
     _nameController.dispose();
@@ -46,42 +41,32 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
   Future<void> _pickChannelPhoto() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
     if (pickedFile == null) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
       final userId = authProvider.user?.uid ?? authProvider.mockUserId;
+      if (userId == null) throw Exception('Not authenticated');
 
-      if (userId == null) {
-        throw Exception('Not authenticated');
-      }
-
-      // FIX #14: Use permanent folder so cleanup doesn't delete avatars
       final imageUrl = await CloudinaryService.uploadImage(
         File(pickedFile.path),
-        'aurachat/permanent/avatars/channels/$userId'
+        'luma/permanent/avatars/channels/$userId',
       );
 
-      if (imageUrl == null) {
-        throw Exception('Upload failed');
-      }
-
+      if (imageUrl == null) throw Exception('Upload failed');
+      if (!mounted) return;
       setState(() => _channelPhotoUrl = imageUrl);
     } catch (e) {
       debugPrint('Photo upload failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Photo upload failed: $e. Continuing without photo.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Photo upload failed: $e')),
+      );
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -92,11 +77,12 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
     }
 
     try {
-      final firestore = FirebaseFirestore.instance;
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final currentUserId =
+          authProvider.user?.uid ?? authProvider.mockUserId;
 
-      final snapshot = await firestore
+      final snapshot = await FirebaseFirestore.instance
           .collection('users')
           .where('username', isGreaterThanOrEqualTo: query)
           .where('username', isLessThanOrEqualTo: '$query\uf8ff')
@@ -104,13 +90,11 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
           .get();
 
       final filtered = snapshot.docs
-          .map((doc) => {
-                'id': doc.id,
-                ...doc.data(),
-              })
+          .map((doc) => {'id': doc.id, ...doc.data()})
           .where((u) => u['id'] != currentUserId)
           .toList();
 
+      if (!mounted) return;
       setState(() => _searchResults = filtered);
     } catch (e) {
       debugPrint('Search error: $e');
@@ -119,7 +103,8 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
 
   void _toggleMember(Map<String, dynamic> user) {
     setState(() {
-      final index = _selectedMembers.indexWhere((m) => m['id'] == user['id']);
+      final index =
+          _selectedMembers.indexWhere((m) => m['id'] == user['id']);
       if (index >= 0) {
         _selectedMembers.removeAt(index);
       } else {
@@ -137,17 +122,19 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-      final firestore = FirebaseFirestore.instance;
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final chatProvider =
+          Provider.of<ChatProvider>(context, listen: false);
       final userId = authProvider.user?.uid ?? authProvider.mockUserId;
       final email = authProvider.email ?? '';
 
-      if (userId == null) {
-        throw Exception('Not authenticated');
-      }
+      if (userId == null) throw Exception('Not authenticated');
 
-      final participants = [userId, ..._selectedMembers.map((m) => m['id'] as String)];
+      final participants = [
+        userId,
+        ..._selectedMembers.map((m) => m['id'] as String),
+      ];
       final participantsData = <String, dynamic>{};
 
       for (final id in participants) {
@@ -159,8 +146,10 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
 
       final chatId = const Uuid().v4();
 
-      // FIX #16: Always create as 'channel'
-      await firestore.collection('chats').doc(chatId).set({
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .set({
         'id': chatId,
         'name': _nameController.text.trim(),
         'description': _descriptionController.text.trim().isNotEmpty
@@ -195,7 +184,6 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
         'last_message': 'Channel created',
       });
 
-      // Create invitation link
       try {
         final inviteResult = await InvitationService.createInvitation(
           chatId: chatId,
@@ -206,6 +194,7 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
               ? _inviteNameController.text.trim()
               : null,
         );
+        if (!mounted) return;
         setState(() => _generatedLink = inviteResult['link'] as String?);
       } catch (e) {
         debugPrint('Invitation creation failed: $e');
@@ -213,31 +202,26 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
 
       await chatProvider.loadChats();
 
+      if (!mounted) return;
       setState(() => _isLoading = false);
 
-      if (mounted && _generatedLink == null) {
+      if (_generatedLink == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Channel created successfully!')),
         );
         Navigator.pop(context);
       }
-      // If a link WAS generated, stay so the rich preview card is visible.
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      if (mounted) {
-        _showError('Error: $e');
-      }
+      _showError('Error: $e');
     }
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red.withOpacity(0.9),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -251,293 +235,363 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              _bgDark,
-              _bgCard,
-              Color(0xFF0f172a),
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.arrow_back,
+                        color: theme.colorScheme.onSurface),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'New Channel',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w600),
                     ),
-                    Expanded(
-                      child: ShaderMask(
-                        shaderCallback: (bounds) => const LinearGradient(
-                          colors: [_purple, _cyan],
-                        ).createShader(bounds),
-                        child: const Text(
-                          'New Channel',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (_isLoading)
-                      const SizedBox(
+                  ),
+                  if (_isLoading)
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    else if (_generatedLink == null)
-                      TextButton(
-                        onPressed: _createChannel,
-                        child: const Text('Create', style: TextStyle(color: _cyan, fontWeight: FontWeight.bold)),
-                      )
-                    else
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Done', style: TextStyle(color: _cyan, fontWeight: FontWeight.bold)),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.primary,
+                        ),
                       ),
-                  ],
-                ),
+                    )
+                  else if (_generatedLink == null)
+                    TextButton(
+                      onPressed: _createChannel,
+                      style: TextButton.styleFrom(
+                        foregroundColor: theme.colorScheme.primary,
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      child: const Text('Create'),
+                    )
+                  else
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: TextButton.styleFrom(
+                        foregroundColor: theme.colorScheme.primary,
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      child: const Text('Done'),
+                    ),
+                ],
               ),
+            ),
 
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Photo upload
-                      Center(
-                        child: GestureDetector(
-                          onTap: _generatedLink == null ? _pickChannelPhoto : null,
-                          child: Stack(
-                            children: [
-                              _buildChannelAvatar(),
-                              if (_generatedLink == null)
-                                Positioned(
-                                  bottom: 0,
-                                  right: 0,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: const BoxDecoration(
-                                      gradient: LinearGradient(colors: [_purple, _cyan]),
-                                      shape: BoxShape.circle,
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Photo upload
+                    Center(
+                      child: GestureDetector(
+                        onTap: _generatedLink == null
+                            ? _pickChannelPhoto
+                            : null,
+                        child: Stack(
+                          children: [
+                            _buildChannelAvatar(theme),
+                            if (_generatedLink == null)
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: theme.scaffoldBackgroundColor,
+                                      width: 2,
                                     ),
-                                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 18),
                                   ),
+                                  child: const Icon(Icons.camera_alt,
+                                      color: Colors.white, size: 14),
                                 ),
-                            ],
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (_generatedLink == null)
+                      Center(
+                        child: Text(
+                          'Tap to add photo',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.5),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      if (_generatedLink == null)
-                        Center(
-                          child: Text(
-                            'Tap to add photo',
-                            style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.4)),
+                    const SizedBox(height: 32),
+
+                    if (_generatedLink != null) ...[
+                      _buildGeneratedLinkCard(theme),
+                      const SizedBox(height: 24),
+                    ] else ...[
+                      _buildField(
+                        theme,
+                        label: 'Channel Name',
+                        hint: 'Enter channel name',
+                        icon: Icons.edit_outlined,
+                        controller: _nameController,
+                      ),
+                      const SizedBox(height: 16),
+                      _buildField(
+                        theme,
+                        label: 'Description',
+                        hint: 'Add a description (optional)',
+                        icon: Icons.description_outlined,
+                        controller: _descriptionController,
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 16),
+                      _buildField(
+                        theme,
+                        label: 'Invitation Link Name',
+                        hint: 'e.g., my-awesome-channel (optional)',
+                        icon: Icons.link,
+                        controller: _inviteNameController,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Info banner
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: theme.colorScheme.primary
+                                .withOpacity(0.2),
                           ),
                         ),
-                      const SizedBox(height: 32),
-
-                      if (_generatedLink != null) ...[
-                        _buildGeneratedLinkCard(),
-                        const SizedBox(height: 24),
-                      ] else ...[
-                        // Name field
-                        _buildGlassInput(
-                          label: 'Channel Name',
-                          hint: 'Enter channel name',
-                          icon: Icons.edit,
-                          controller: _nameController,
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Description field
-                        _buildGlassInput(
-                          label: 'Description',
-                          hint: 'Add a description (optional)',
-                          icon: Icons.description,
-                          controller: _descriptionController,
-                          maxLines: 2,
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Invite link name
-                        _buildGlassInput(
-                          label: 'Invitation Link Name',
-                          hint: 'e.g., my-awesome-channel (optional)',
-                          icon: Icons.link,
-                          controller: _inviteNameController,
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Channel info banner
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.white.withOpacity(0.08)),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: _purple.withOpacity(0.2),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.campaign, color: _purple, size: 20),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary
+                                    .withOpacity(0.15),
+                                shape: BoxShape.circle,
                               ),
-                              const SizedBox(width: 12),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'One-Way Messaging',
-                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                              child: Icon(
+                                Icons.campaign_outlined,
+                                color: theme.colorScheme.primary,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'One-Way Messaging',
+                                    style: theme.textTheme.titleSmall
+                                        ?.copyWith(
+                                            fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Only admins and owner can post messages',
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.6),
                                     ),
-                                    Text(
-                                      'Only admins and owner can post messages',
-                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      _buildField(
+                        theme,
+                        label: 'Add Subscribers',
+                        hint: 'Search users to add... (optional)',
+                        icon: Icons.search,
+                        controller: _searchController,
+                        onChanged: _searchUsers,
+                      ),
+
+                      if (_selectedMembers.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          height: 92,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _selectedMembers.length,
+                            itemBuilder: (context, index) {
+                              final member = _selectedMembers[index];
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 12),
+                                child: Column(
+                                  children: [
+                                    Stack(
+                                      children: [
+                                        _buildMemberAvatar(
+                                          theme,
+                                          member['avatar_url'],
+                                          member['username'],
+                                        ),
+                                        Positioned(
+                                          top: 0,
+                                          right: 0,
+                                          child: GestureDetector(
+                                            onTap: () =>
+                                                _toggleMember(member),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.all(2),
+                                              decoration: BoxDecoration(
+                                                color: theme
+                                                    .colorScheme.error,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: theme
+                                                      .scaffoldBackgroundColor,
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: const Icon(Icons.close,
+                                                  size: 12,
+                                                  color: Colors.white),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    SizedBox(
+                                      width: 60,
+                                      child: Text(
+                                        member['username'] ?? 'Unknown',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(fontSize: 11),
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.center,
+                                      ),
                                     ),
                                   ],
                                 ),
-                              ),
-                            ],
+                              );
+                            },
                           ),
                         ),
-                        const SizedBox(height: 24),
+                      ],
 
-                        // Search users
-                        _buildGlassInput(
-                          label: 'Add Subscribers',
-                          hint: 'Search users to add... (optional)',
-                          icon: Icons.search,
-                          controller: _searchController,
-                          onChanged: _searchUsers,
-                        ),
-
-                        // Selected members
-                        if (_selectedMembers.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            height: 90,
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: _selectedMembers.length,
-                              itemBuilder: (context, index) {
-                                final member = _selectedMembers[index];
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 12),
-                                  child: Column(
-                                    children: [
-                                      Stack(
-                                        children: [
-                                          _buildMemberAvatar(member['avatar_url'], member['username']),
-                                          Positioned(
-                                            top: 0,
-                                            right: 0,
-                                            child: GestureDetector(
-                                              onTap: () => _toggleMember(member),
-                                              child: Container(
-                                                padding: const EdgeInsets.all(2),
-                                                decoration: const BoxDecoration(
-                                                  color: Colors.red,
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Icon(Icons.close, size: 14, color: Colors.white),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        member['username'] ?? 'Unknown',
-                                        style: const TextStyle(fontSize: 12, color: Colors.white70),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                      if (_searchResults.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        ..._searchResults.map((user) {
+                          final isSelected = _selectedMembers
+                              .any((m) => m['id'] == user['id']);
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.03),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          ),
-                        ],
-
-                        // Search results
-                        if (_searchResults.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          ..._searchResults.map((user) {
-                            final isSelected = _selectedMembers.any((m) => m['id'] == user['id']);
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.03),
-                                borderRadius: BorderRadius.circular(12),
+                            child: ListTile(
+                              leading: _buildMemberAvatar(
+                                theme,
+                                user['avatar_url'],
+                                user['username'],
                               ),
-                              child: ListTile(
-                                leading: _buildMemberAvatar(user['avatar_url'], user['username']),
-                                title: Text(user['username'] ?? 'Unknown', style: const TextStyle(color: Colors.white)),
-                                subtitle: Text(user['email'] ?? '', style: TextStyle(color: Colors.white.withOpacity(0.4))),
-                                trailing: isSelected
-                                    ? const Icon(Icons.check_circle, color: _purple)
-                                    : const Icon(Icons.add_circle_outline, color: Colors.white54),
-                                onTap: () => _toggleMember(user),
+                              title: Text(
+                                user['username'] ?? 'Unknown',
+                                style: const TextStyle(fontSize: 15),
                               ),
-                            );
-                          }).toList(),
-                        ],
+                              subtitle: Text(
+                                user['email'] ?? '',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.5),
+                                  fontSize: 13,
+                                ),
+                              ),
+                              trailing: isSelected
+                                  ? Icon(Icons.check_circle,
+                                      color: theme.colorScheme.primary)
+                                  : Icon(Icons.add_circle_outline,
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.4)),
+                              onTap: () => _toggleMember(user),
+                            ),
+                          );
+                        }),
                       ],
                     ],
-                  ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// NEW: Telegram-style rich link card for the newly created channel.
-  Widget _buildGeneratedLinkCard() {
-    final name = _nameController.text.trim().isEmpty ? 'Channel' : _nameController.text.trim();
+  Widget _buildGeneratedLinkCard(ThemeData theme) {
+    final name = _nameController.text.trim().isEmpty
+        ? 'Channel'
+        : _nameController.text.trim();
     final memberCount = _selectedMembers.length + 1;
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_purple.withOpacity(0.14), _cyan.withOpacity(0.08)],
+        color: theme.colorScheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.primary.withOpacity(0.25),
         ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _purple.withOpacity(0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 18),
+              const Icon(Icons.check_circle,
+                  color: Color(0xFF4FAE4F), size: 18),
               const SizedBox(width: 8),
-              const Text('Channel created', style: TextStyle(color: Color(0xFF10B981), fontSize: 13, fontWeight: FontWeight.w700)),
+              const Text(
+                'Channel created',
+                style: TextStyle(
+                  color: Color(0xFF4FAE4F),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -548,12 +602,15 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                 height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const LinearGradient(colors: [_purple, _cyan]),
-                  border: Border.all(color: _purple.withOpacity(0.35), width: 2),
+                  color: theme.colorScheme.primary.withOpacity(0.15),
                 ),
-                child: (_channelPhotoUrl != null && _channelPhotoUrl!.isNotEmpty)
-                    ? ClipOval(child: Image.network(_channelPhotoUrl!, fit: BoxFit.cover))
-                    : Center(child: Icon(Icons.campaign, color: Colors.white, size: 24)),
+                child: (_channelPhotoUrl != null &&
+                        _channelPhotoUrl!.isNotEmpty)
+                    ? ClipOval(
+                        child: Image.network(_channelPhotoUrl!,
+                            fit: BoxFit.cover))
+                    : Icon(Icons.campaign,
+                        color: theme.colorScheme.primary, size: 24),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -561,14 +618,38 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(children: const [
-                      Icon(Icons.campaign, size: 11, color: _purple),
-                      SizedBox(width: 4),
-                      Text('CHANNEL', style: TextStyle(color: _purple, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.6)),
+                    Row(children: [
+                      Icon(Icons.campaign,
+                          size: 11, color: theme.colorScheme.primary),
+                      const SizedBox(width: 4),
+                      Text(
+                        'CHANNEL',
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
                     ]),
                     const SizedBox(height: 2),
-                    Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-                    Text('$memberCount subscriber${memberCount != 1 ? 's' : ''}', style: TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 12)),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      '$memberCount subscriber${memberCount != 1 ? 's' : ''}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface
+                            .withOpacity(0.55),
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -576,16 +657,22 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
           ),
           const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.25), borderRadius: BorderRadius.circular(10)),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.onSurface.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(10),
+            ),
             child: Row(
               children: [
-                const Icon(Icons.link, size: 14, color: Colors.white54),
+                Icon(Icons.link,
+                    size: 14,
+                    color: theme.colorScheme.onSurface.withOpacity(0.5)),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     _generatedLink ?? '',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -598,12 +685,15 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _copyLink,
-                  icon: const Icon(Icons.copy, size: 16, color: Colors.white70),
-                  label: const Text('Copy Link', style: TextStyle(color: Colors.white70)),
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy Link'),
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                    foregroundColor: theme.colorScheme.onSurface,
+                    side: BorderSide(color: theme.dividerColor),
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
               ),
@@ -611,17 +701,25 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _generatedLink ?? ''));
+                    Clipboard.setData(
+                        ClipboardData(text: _generatedLink ?? ''));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Link copied — paste it anywhere to share')),
+                      const SnackBar(
+                        content:
+                            Text('Link copied — paste it anywhere to share'),
+                      ),
                     );
                   },
-                  icon: const Icon(Icons.share, size: 16, color: Colors.white),
+                  icon: const Icon(Icons.share, size: 16),
                   label: const Text('Share'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _purple,
+                    backgroundColor: theme.colorScheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
               ),
@@ -632,47 +730,55 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
     );
   }
 
-  Widget _buildChannelAvatar() {
+  Widget _buildChannelAvatar(ThemeData theme) {
     if (_channelPhotoUrl != null && _channelPhotoUrl!.isNotEmpty) {
       return CircleAvatar(
-        radius: 50,
-        backgroundColor: _purple.withOpacity(0.2),
+        radius: 48,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
         backgroundImage: NetworkImage(_channelPhotoUrl!),
         onBackgroundImageError: (_, __) {},
       );
     }
-
     return CircleAvatar(
-      radius: 50,
-      backgroundColor: _purple.withOpacity(0.2),
-      child: const Icon(
+      radius: 48,
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+      child: Icon(
         Icons.campaign,
-        size: 50,
-        color: _purple,
+        size: 48,
+        color: theme.colorScheme.primary,
       ),
     );
   }
 
-  Widget _buildMemberAvatar(String? avatarUrl, String? username) {
+  Widget _buildMemberAvatar(
+    ThemeData theme,
+    String? avatarUrl,
+    String? username,
+  ) {
     if (avatarUrl != null && avatarUrl.isNotEmpty) {
       return CircleAvatar(
         radius: 28,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
         backgroundImage: NetworkImage(avatarUrl),
         onBackgroundImageError: (_, __) {},
       );
     }
-
     return CircleAvatar(
       radius: 28,
-      backgroundColor: _purple.withOpacity(0.2),
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
       child: Text(
         (username ?? 'U')[0].toUpperCase(),
-        style: const TextStyle(fontSize: 20, color: Colors.white),
+        style: TextStyle(
+          fontSize: 20,
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
 
-  Widget _buildGlassInput({
+  Widget _buildField(
+    ThemeData theme, {
     required String label,
     required String hint,
     required IconData icon,
@@ -685,27 +791,23 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.7)),
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w500,
+            color: theme.colorScheme.onSurface.withOpacity(0.7),
+          ),
         ),
         const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
+        TextField(
+          controller: controller,
+          maxLines: maxLines,
+          onChanged: onChanged,
+          style: TextStyle(
+            color: theme.colorScheme.onSurface,
+            fontSize: 16,
           ),
-          child: TextField(
-            controller: controller,
-            maxLines: maxLines,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
-            onChanged: onChanged,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.25)),
-              prefixIcon: Icon(icon, color: Colors.white.withOpacity(0.3)),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-            ),
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon: Icon(icon, color: theme.colorScheme.primary),
           ),
         ),
       ],
