@@ -14,7 +14,7 @@ class SettingsProvider extends ChangeNotifier {
   bool _appPasscode = false;
   bool _biometricLock = false;
   String _passcode = '';
-  int _autoLockTimeout = 5; // minutes
+  int _autoLockTimeout = 5;
 
   // Notification Settings
   bool _messageTones = true;
@@ -62,9 +62,11 @@ class SettingsProvider extends ChangeNotifier {
     _foregroundTimer?.cancel();
     _foregroundTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       final prefs = await _prefs;
-      await prefs.setInt('last_foreground_time', DateTime.now().millisecondsSinceEpoch);
+      await prefs.setInt(
+          'last_foreground_time', DateTime.now().millisecondsSinceEpoch);
     });
-    _prefs.then((prefs) => prefs.setInt('last_foreground_time', DateTime.now().millisecondsSinceEpoch));
+    _prefs.then((prefs) => prefs.setInt(
+        'last_foreground_time', DateTime.now().millisecondsSinceEpoch));
   }
 
   void stopForegroundTimer() {
@@ -111,7 +113,8 @@ class SettingsProvider extends ChangeNotifier {
     final now = DateTime.now();
     final diffMinutes = now.difference(lastTime).inMinutes;
 
-    debugPrint('App lock check: last = $lastTime, now = $now, diff = $diffMinutes min, timeout = $_autoLockTimeout min');
+    debugPrint(
+        'App lock check: last = $lastTime, now = $now, diff = $diffMinutes min, timeout = $_autoLockTimeout min');
 
     if (diffMinutes >= _autoLockTimeout) {
       _isLocked = true;
@@ -210,18 +213,23 @@ class SettingsProvider extends ChangeNotifier {
     _profilePhotoVisible = prefs.getBool('profile_photo_visible') ?? true;
     _forwardedMessages = prefs.getBool('forwarded_messages') ?? true;
     _addToGroups = prefs.getBool('add_to_groups') ?? true;
-    _voiceVideoCallsVisible = prefs.getBool('voice_video_calls_visible') ?? true;
+    _voiceVideoCallsVisible =
+        prefs.getBool('voice_video_calls_visible') ?? true;
     _findByPhone = prefs.getBool('find_by_phone') ?? true;
     _findByUsername = prefs.getBool('find_by_username') ?? true;
 
     final themeString = prefs.getString('theme_mode') ?? 'dark';
-    _themeMode = themeString == 'light' ? ThemeMode.light :
-                 themeString == 'system' ? ThemeMode.system : ThemeMode.dark;
+    _themeMode = themeString == 'light'
+        ? ThemeMode.light
+        : themeString == 'system'
+            ? ThemeMode.system
+            : ThemeMode.dark;
 
     _language = prefs.getString('language') ?? 'en';
 
     _autoDownloadMedia = prefs.getBool('auto_download_media') ?? true;
-    _autoDownloadDocuments = prefs.getBool('auto_download_documents') ?? false;
+    _autoDownloadDocuments =
+        prefs.getBool('auto_download_documents') ?? false;
     _saveToGallery = prefs.getBool('save_to_gallery') ?? true;
 
     notifyListeners();
@@ -239,19 +247,23 @@ class SettingsProvider extends ChangeNotifier {
       final userId = _auth.currentUser?.uid ?? _mockUserId;
       if (userId == null) return;
 
-      final doc = await _firestore.collection('user_settings').doc(userId).get();
+      final doc =
+          await _firestore.collection('user_settings').doc(userId).get();
 
       if (doc.exists) {
         final data = doc.data()!;
-        _twoStepVerification = data['two_step_verification'] ?? _twoStepVerification;
+        _twoStepVerification =
+            data['two_step_verification'] ?? _twoStepVerification;
         _appPasscode = data['app_passcode'] ?? _appPasscode;
         _biometricLock = data['biometric_lock'] ?? _biometricLock;
         _passcode = data['passcode'] ?? _passcode;
         _autoLockTimeout = data['auto_lock_timeout'] ?? _autoLockTimeout;
 
         _messageTones = data['message_tones'] ?? _messageTones;
-        _groupNotifications = data['group_notifications'] ?? _groupNotifications;
-        _channelNotifications = data['channel_notifications'] ?? _channelNotifications;
+        _groupNotifications =
+            data['group_notifications'] ?? _groupNotifications;
+        _channelNotifications =
+            data['channel_notifications'] ?? _channelNotifications;
         _voiceVideoCalls = data['voice_video_calls'] ?? _voiceVideoCalls;
         _inAppSounds = data['in_app_sounds'] ?? _inAppSounds;
         _inAppVibrate = data['in_app_vibrate'] ?? _inAppVibrate;
@@ -259,23 +271,33 @@ class SettingsProvider extends ChangeNotifier {
 
         _callRingtone = data['call_ringtone'] ?? _callRingtone;
 
-        _phoneNumberVisible = data['phone_number_visible'] ?? _phoneNumberVisible;
-        _lastSeenVisible = data['last_seen_visible'] ?? _lastSeenVisible;
-        _profilePhotoVisible = data['profile_photo_visible'] ?? _profilePhotoVisible;
-        _forwardedMessages = data['forwarded_messages'] ?? _forwardedMessages;
+        _phoneNumberVisible =
+            data['phone_number_visible'] ?? _phoneNumberVisible;
+        _lastSeenVisible =
+            data['last_seen_visible'] ?? _lastSeenVisible;
+        _profilePhotoVisible =
+            data['profile_photo_visible'] ?? _profilePhotoVisible;
+        _forwardedMessages =
+            data['forwarded_messages'] ?? _forwardedMessages;
         _addToGroups = data['add_to_groups'] ?? _addToGroups;
-        _voiceVideoCallsVisible = data['voice_video_calls_visible'] ?? _voiceVideoCallsVisible;
+        _voiceVideoCallsVisible =
+            data['voice_video_calls_visible'] ?? _voiceVideoCallsVisible;
         _findByPhone = data['find_by_phone'] ?? _findByPhone;
         _findByUsername = data['find_by_username'] ?? _findByUsername;
 
         final themeString = data['theme_mode'] ?? 'dark';
-        _themeMode = themeString == 'light' ? ThemeMode.light :
-                     themeString == 'system' ? ThemeMode.system : ThemeMode.dark;
+        _themeMode = themeString == 'light'
+            ? ThemeMode.light
+            : themeString == 'system'
+                ? ThemeMode.system
+                : ThemeMode.dark;
 
         _language = data['language'] ?? _language;
 
-        _autoDownloadMedia = data['auto_download_media'] ?? _autoDownloadMedia;
-        _autoDownloadDocuments = data['auto_download_documents'] ?? _autoDownloadDocuments;
+        _autoDownloadMedia =
+            data['auto_download_media'] ?? _autoDownloadMedia;
+        _autoDownloadDocuments =
+            data['auto_download_documents'] ?? _autoDownloadDocuments;
         _saveToGallery = data['save_to_gallery'] ?? _saveToGallery;
 
         notifyListeners();
@@ -292,13 +314,11 @@ class SettingsProvider extends ChangeNotifier {
 
       await _firestore.collection('user_settings').doc(userId).set({
         'user_id': userId,
-        // Security
         'two_step_verification': _twoStepVerification,
         'app_passcode': _appPasscode,
         'biometric_lock': _biometricLock,
-        'passcode': _passcode,                        // ← FIXED: was missing
+        'passcode': _passcode,
         'auto_lock_timeout': _autoLockTimeout,
-        // Privacy
         'phone_number_visible': _phoneNumberVisible,
         'last_seen_visible': _lastSeenVisible,
         'profile_photo_visible': _profilePhotoVisible,
@@ -307,15 +327,23 @@ class SettingsProvider extends ChangeNotifier {
         'voice_video_calls_visible': _voiceVideoCallsVisible,
         'find_by_phone': _findByPhone,
         'find_by_username': _findByUsername,
-        // Data Storage
         'auto_download_media': _autoDownloadMedia,
         'auto_download_documents': _autoDownloadDocuments,
         'save_to_gallery': _saveToGallery,
-        // Theme & Language
-        'theme_mode': _themeMode == ThemeMode.light ? 'light' : _themeMode == ThemeMode.system ? 'system' : 'dark',
+        'theme_mode': _themeMode == ThemeMode.light
+            ? 'light'
+            : _themeMode == ThemeMode.system
+                ? 'system'
+                : 'dark',
         'language': _language,
-        // Call Ringtone
         'call_ringtone': _callRingtone,
+        'message_tones': _messageTones,
+        'group_notifications': _groupNotifications,
+        'channel_notifications': _channelNotifications,
+        'voice_video_calls': _voiceVideoCalls,
+        'in_app_sounds': _inAppSounds,
+        'in_app_vibrate': _inAppVibrate,
+        'show_preview': _showPreview,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -323,7 +351,31 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
-  // Security Setters
+  // ─── Privacy loader helper for privacy screen ───
+  void applyPrivacySettings(Map<String, dynamic> d) {
+    _phoneNumberVisible =
+        d['phone_number_visible'] as bool? ?? _phoneNumberVisible;
+    _lastSeenVisible =
+        d['last_seen_visible'] as bool? ?? _lastSeenVisible;
+    _profilePhotoVisible =
+        d['profile_photo_visible'] as bool? ?? _profilePhotoVisible;
+    _forwardedMessages =
+        d['forwarded_messages'] as bool? ?? _forwardedMessages;
+    _addToGroups = d['add_to_groups'] as bool? ?? _addToGroups;
+    _voiceVideoCallsVisible =
+        d['voice_video_calls_visible'] as bool? ??
+            _voiceVideoCallsVisible;
+    _findByPhone = d['find_by_phone'] as bool? ?? _findByPhone;
+    _findByUsername =
+        d['find_by_username'] as bool? ?? _findByUsername;
+    _biometricLock = d['biometric_lock'] as bool? ?? _biometricLock;
+    _appPasscode = d['app_passcode'] as bool? ?? _appPasscode;
+    _autoLockTimeout =
+        d['auto_lock_timeout'] as int? ?? _autoLockTimeout;
+    notifyListeners();
+  }
+
+  // ─── Security setters ───
   Future<void> setTwoStepVerification(bool value) async {
     _twoStepVerification = value;
     final prefs = await _prefs;
@@ -364,12 +416,13 @@ class SettingsProvider extends ChangeNotifier {
     _saveToFirebase();
   }
 
-  // Notification Setters
+  // ─── Notification setters ───
   Future<void> setMessageTones(bool value) async {
     _messageTones = value;
     final prefs = await _prefs;
     await prefs.setBool('message_tones', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setGroupNotifications(bool value) async {
@@ -377,6 +430,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('group_notifications', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setChannelNotifications(bool value) async {
@@ -384,6 +438,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('channel_notifications', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setVoiceVideoCalls(bool value) async {
@@ -391,6 +446,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('voice_video_calls', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setInAppSounds(bool value) async {
@@ -398,6 +454,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('in_app_sounds', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setInAppVibrate(bool value) async {
@@ -405,6 +462,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('in_app_vibrate', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setShowPreview(bool value) async {
@@ -412,9 +470,9 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('show_preview', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
-  // Call Ringtone Setter
   Future<void> setCallRingtone(String ringtoneId) async {
     _callRingtone = ringtoneId;
     final prefs = await _prefs;
@@ -423,7 +481,7 @@ class SettingsProvider extends ChangeNotifier {
     _saveToFirebase();
   }
 
-  // Privacy Setters
+  // ─── Privacy setters ───
   Future<void> setPhoneNumberVisible(bool value) async {
     _phoneNumberVisible = value;
     final prefs = await _prefs;
@@ -488,7 +546,7 @@ class SettingsProvider extends ChangeNotifier {
     _saveToFirebase();
   }
 
-  // Theme
+  // ─── Theme ───
   Future<void> setThemeMode(ThemeMode mode) async {
     _themeMode = mode;
     final prefs = await _prefs;
@@ -497,22 +555,25 @@ class SettingsProvider extends ChangeNotifier {
     if (mode == ThemeMode.system) modeString = 'system';
     await prefs.setString('theme_mode', modeString);
     notifyListeners();
+    _saveToFirebase();
   }
 
-  // Language
+  // ─── Language ───
   Future<void> setLanguage(String lang) async {
     _language = lang;
     final prefs = await _prefs;
     await prefs.setString('language', lang);
     notifyListeners();
+    _saveToFirebase();
   }
 
-  // Data Storage Setters
+  // ─── Data storage setters ───
   Future<void> setAutoDownloadMedia(bool value) async {
     _autoDownloadMedia = value;
     final prefs = await _prefs;
     await prefs.setBool('auto_download_media', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setAutoDownloadDocuments(bool value) async {
@@ -520,6 +581,7 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('auto_download_documents', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
   Future<void> setSaveToGallery(bool value) async {
@@ -527,24 +589,26 @@ class SettingsProvider extends ChangeNotifier {
     final prefs = await _prefs;
     await prefs.setBool('save_to_gallery', value);
     notifyListeners();
+    _saveToFirebase();
   }
 
-  // Reset all settings — FIXED: wipes Firestore too so nothing pulls back
+  // ─── Reset ───
   Future<void> resetSettings() async {
     final prefs = await _prefs;
     await prefs.clear();
 
-    // Wipe Firestore so _syncFromFirebase() can't pull old values back
     try {
       final userId = _auth.currentUser?.uid ?? _mockUserId;
       if (userId != null) {
-        await _firestore.collection('user_settings').doc(userId).delete();
+        await _firestore
+            .collection('user_settings')
+            .doc(userId)
+            .delete();
       }
     } catch (e) {
       debugPrint('Reset Firestore error: $e');
     }
 
-    // Reset in-memory to defaults (do NOT call _loadSettings — it would re-sync from Firestore)
     _twoStepVerification = false;
     _appPasscode = false;
     _biometricLock = false;
