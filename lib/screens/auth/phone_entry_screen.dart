@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:country_code_picker/country_code_picker.dart';
 
 class PhoneEntryScreen extends StatefulWidget {
   const PhoneEntryScreen({super.key});
@@ -15,23 +17,6 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
   bool _isLoading = false;
   String? _error;
 
-  static const _countryCodes = [
-    ('+1', '🇺🇸 US'),
-    ('+44', '🇬🇧 UK'),
-    ('+91', '🇮🇳 IN'),
-    ('+234', '🇳🇬 NG'),
-    ('+27', '🇿🇦 ZA'),
-    ('+254', '🇰🇪 KE'),
-    ('+233', '🇬🇭 GH'),
-    ('+33', '🇫🇷 FR'),
-    ('+49', '🇩🇪 DE'),
-    ('+81', '🇯🇵 JP'),
-    ('+86', '🇨🇳 CN'),
-    ('+55', '🇧🇷 BR'),
-    ('+52', '🇲🇽 MX'),
-    ('+61', '🇦🇺 AU'),
-  ];
-
   @override
   void dispose() {
     _phoneController.dispose();
@@ -39,29 +24,69 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
   }
 
   Future<void> _continue() async {
-    final raw = _phoneController.text.trim().replaceAll(RegExp(r'\D'), '');
-    if (raw.isEmpty || raw.length < 6) {
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty || digits.length < 6) {
       setState(() => _error = 'Enter a valid phone number');
       return;
     }
+
+    final full = '$_countryCode$digits';
 
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
-    final full = '$_countryCode$raw';
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .where('phone', isEqualTo: full)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 8));
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('pending_phone', full);
-    await prefs.setInt(
-      'pending_phone_timestamp',
-      DateTime.now().millisecondsSinceEpoch,
-    );
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pending_phone', full);
 
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    Navigator.pushReplacementNamed(context, '/email_verification');
+      if (!mounted) return;
+
+      if (snapshot.docs.isNotEmpty) {
+        // ═══ EXISTING USER ═══
+        final userData = snapshot.docs.first.data();
+        final email = userData['email'] as String?;
+        final uid = snapshot.docs.first.id;
+
+        if (email == null || email.isEmpty) {
+          setState(() {
+            _isLoading = false;
+            _error = 'Account setup incomplete. Please sign up again.';
+          });
+          return;
+        }
+
+        await prefs.setString('signin_email', email);
+        await prefs.setString('signin_uid', uid);
+
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        Navigator.pushReplacementNamed(context, '/signin_passcode');
+      } else {
+        // ═══ NEW USER ═══
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        Navigator.pushReplacementNamed(context, '/email_entry');
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pending_phone', full);
+
+      setState(() {
+        _isLoading = false;
+        _error = 'Network error. Check your connection and try again.';
+      });
+    }
   }
 
   @override
@@ -78,19 +103,28 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
             children: [
               const SizedBox(height: 40),
 
-              // Logo — blue rounded square
+              // ── App logo ──
               Container(
-                width: 64,
-                height: 64,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.primary,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Center(
-                  child: Icon(
-                    Icons.chat_bubble_rounded,
-                    color: Colors.white,
-                    size: 32,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: theme.colorScheme.primary,
+                      child: const Center(
+                        child: Icon(
+                          Icons.chat_bubble_rounded,
+                          color: Colors.white,
+                          size: 36,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -106,7 +140,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'We use it for account recovery. You can add a username later.',
+                'Pick your country, then enter your number.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurface.withOpacity(0.6),
                   height: 1.4,
@@ -115,54 +149,60 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
 
               const SizedBox(height: 40),
 
-              // Country code + phone field
+              // ── Country picker + phone ──
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Country code dropdown
+                  // Country code picker (all countries)
                   Container(
                     height: 56,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
                       color: theme.brightness == Brightness.dark
                           ? const Color(0xFF2A2A2A)
                           : const Color(0xFFF1F1F1),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _countryCode,
-                        icon: Icon(
-                          Icons.arrow_drop_down,
-                          color: theme.colorScheme.primary,
+                    child: CountryCodePicker(
+                      onChanged: (country) {
+                        setState(() => _countryCode = country.dialCode ?? '+1');
+                      },
+                      initialSelection: 'US',
+                      favorite: const ['US', 'GB', 'NG', 'IN', 'KE', 'GH'],
+                      showCountryOnly: false,
+                      showOnlyCountryWhenClosed: false,
+                      alignLeft: false,
+                      showFlag: true,
+                      showFlagDialog: true,
+                      showDropDownButton: true,
+                      padding: EdgeInsets.zero,
+                      dialogBackgroundColor: theme.brightness == Brightness.dark
+                          ? const Color(0xFF1F1F1F)
+                          : Colors.white,
+                      textStyle: TextStyle(
+                        color: theme.colorScheme.onSurface,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      dialogTextStyle: TextStyle(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                      searchDecoration: InputDecoration(
+                        hintText: 'Search country...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        dropdownColor: theme.brightness == Brightness.dark
-                            ? const Color(0xFF2A2A2A)
-                            : Colors.white,
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurface,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        items: _countryCodes.map((c) {
-                          return DropdownMenuItem(
-                            value: c.$1,
-                            child: Text('${c.$2}  ${c.$1}'),
-                          );
-                        }).toList(),
-                        onChanged: (v) {
-                          if (v != null) setState(() => _countryCode = v);
-                        },
                       ),
                     ),
                   ),
                   const SizedBox(width: 12),
 
-                  // Phone number field
+                  // Phone number
                   Expanded(
                     child: TextField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
+                      autofocus: true,
                       inputFormatters: [
                         FilteringTextInputFormatter.digitsOnly,
                         LengthLimitingTextInputFormatter(15),
@@ -173,7 +213,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen> {
                         letterSpacing: 1.2,
                       ),
                       decoration: const InputDecoration(
-                        hintText: '123 456 7890',
+                        hintText: '234 567 8900',
                       ),
                     ),
                   ),
