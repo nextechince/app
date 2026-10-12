@@ -32,7 +32,7 @@ class _SplashScreenState extends State<SplashScreen>
       curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
     );
 
-    _scale = Tween<double>(begin: 0.85, end: 1.0).animate(
+    _scale = Tween<double>(begin: 0.88, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
         curve: const Interval(0.0, 0.6, curve: Curves.easeOutCubic),
@@ -50,7 +50,6 @@ class _SplashScreenState extends State<SplashScreen>
 
     final prefs = await SharedPreferences.getInstance();
     final pendingPhone = prefs.getString('pending_phone');
-    final pendingEmail = prefs.getString('pending_email');
     final currentUser = FirebaseAuth.instance.currentUser;
 
     // Signed-in Firebase user → main or setup
@@ -61,8 +60,10 @@ class _SplashScreenState extends State<SplashScreen>
             .doc(currentUser.uid)
             .get();
         final data = doc.data();
-        final hasUsername = (data?['username'] as String?)?.trim().isNotEmpty ?? false;
-        final hasName = (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
+        final hasUsername =
+            (data?['username'] as String?)?.trim().isNotEmpty ?? false;
+        final hasName =
+            (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
 
         if (doc.exists && hasUsername && hasName) {
           Navigator.pushReplacementNamed(context, '/main');
@@ -80,7 +81,7 @@ class _SplashScreenState extends State<SplashScreen>
       Navigator.pushReplacementNamed(context, '/phone_entry');
       return;
     }
-    Navigator.pushReplacementNamed(context, '/email_verification');
+    Navigator.pushReplacementNamed(context, '/email_entry');
   }
 
   @override
@@ -94,42 +95,51 @@ class _SplashScreenState extends State<SplashScreen>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Telegram-style: solid bg, centered logo, app name, subtle tagline
     return Scaffold(
-      backgroundColor: isDark
-          ? const Color(0xFF212121)
-          : const Color(0xFFFFFFFF),
-      body: Center(
+      backgroundColor:
+          isDark ? const Color(0xFF212121) : const Color(0xFFFFFFFF),
+      body: SafeArea(
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
             return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // ── Logo (flat blue rounded square — Telegram style) ──
+                // Top spacer — pushes content down slightly
+                const Spacer(flex: 3),
+
+                // ── App logo.png — no container, no glow, just the image ──
                 ScaleTransition(
                   scale: _scale,
                   child: FadeTransition(
                     opacity: _fade,
-                    child: Container(
-                      width: 112,
-                      height: 112,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        borderRadius: BorderRadius.circular(32),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.chat_bubble_rounded,
-                          color: Colors.white,
-                          size: 56,
+                    child: SizedBox(
+                      width: 120,
+                      height: 120,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(28),
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary,
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.chat_bubble_rounded,
+                                color: Colors.white,
+                                size: 56,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 32),
+                const SizedBox(height: 28),
 
                 // ── App name ──
                 FadeTransition(
@@ -146,34 +156,53 @@ class _SplashScreenState extends State<SplashScreen>
 
                 const SizedBox(height: 8),
 
-                // ── Tagline (Telegram style — small, muted) ──
+                // ── Tagline ──
                 FadeTransition(
                   opacity: _fade,
                   child: Text(
                     'Fast. Simple. Secure.',
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      color:
+                          theme.colorScheme.onSurface.withOpacity(0.5),
                       letterSpacing: 0.2,
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 64),
+                const Spacer(flex: 4),
 
-                // ── Subtle loading bar (much softer than a spinner) ──
+                // ── Small, subtle loading indicator at bottom ──
                 FadeTransition(
                   opacity: _fade,
                   child: SizedBox(
-                    width: 32,
-                    height: 32,
+                    width: 24,
+                    height: 24,
                     child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
+                      strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        theme.colorScheme.primary.withOpacity(0.7),
+                        theme.colorScheme.primary.withOpacity(0.6),
                       ),
                     ),
                   ),
                 ),
+
+                const SizedBox(height: 32),
+
+                // ── Footer ──
+                FadeTransition(
+                  opacity: _fade,
+                  child: Text(
+                    'from Luma',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface
+                          .withOpacity(0.3),
+                      fontSize: 11,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
               ],
             );
           },
