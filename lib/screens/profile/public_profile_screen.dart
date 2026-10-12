@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../providers/chat_provider.dart';
 import '../../utils/verified_badge.dart';
 
@@ -17,41 +17,56 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   bool _isBlocking = false;
   bool _isAddingContact = false;
 
+  void _toast(String msg, {bool error = false}) {
+    if (!mounted) return;
+    final theme = Theme.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: error ? theme.colorScheme.error : null,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    final theme = Theme.of(context);
+    final args = ModalRoute.of(context)?.settings.arguments
+        as Map<String, dynamic>?;
 
     final userId = args?['userId'] as String?;
-    final passedAvatarUrl = args?['avatarUrl'] as String? ?? args?['avatar_url'] as String?;
+    final passedAvatarUrl =
+        args?['avatarUrl'] as String? ?? args?['avatar_url'] as String?;
 
-    final currentUserId = context.read<AuraAuthProvider>().user?.uid ??
-                         context.read<AuraAuthProvider>().mockUserId;
+    final currentUserId =
+        context.read<LumaAuthProvider>().user?.uid ??
+            context.read<LumaAuthProvider>().mockUserId;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Profile'),
-        backgroundColor: const Color(0xFF0A0A0F),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white70),
-          onPressed: () => Navigator.pop(context),
-        ),
         actions: [
           PopupMenuButton<String>(
-            color: const Color(0xFF1a103c),
-            icon: const Icon(Icons.more_vert, color: Colors.white70),
+            icon: Icon(Icons.more_vert,
+                color: theme.colorScheme.onSurface.withOpacity(0.7)),
             onSelected: (value) {
-              if (value == 'report') _showReportDialog(context, userId, 'User');
+              if (value == 'report') {
+                _showReportDialog(context, userId, 'User');
+              }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'report',
                 child: Row(
                   children: [
-                    Icon(Icons.flag, color: Colors.orange, size: 20),
+                    Icon(Icons.flag_outlined,
+                        color: Color(0xFFE0954A), size: 20),
                     SizedBox(width: 12),
-                    Text('Report', style: TextStyle(color: Colors.white)),
+                    Text('Report'),
                   ],
                 ),
               ),
@@ -60,53 +75,55 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         ],
       ),
       body: userId == null || currentUserId == null
-          ? _buildErrorState('Invalid user')
+          ? _buildErrorState(theme, 'Invalid user')
           : StreamBuilder<DocumentSnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('users')
                   .doc(userId)
                   .snapshots(),
               builder: (context, userSnapshot) {
-                final liveData = userSnapshot.data?.data() as Map<String, dynamic>?;
+                final liveData =
+                    userSnapshot.data?.data() as Map<String, dynamic>?;
 
                 final displayName = liveData?['display_name'] as String? ??
-                                   liveData?['name'] as String? ??
-                                   liveData?['username'] as String? ??
-                                   'Unknown';
+                    liveData?['name'] as String? ??
+                    liveData?['username'] as String? ??
+                    'Unknown';
 
                 final userUsername = liveData?['username'] as String?;
-                final rawAvatarUrl = liveData?['avatar_url'] as String? ?? passedAvatarUrl;
+                final rawAvatarUrl =
+                    liveData?['avatar_url'] as String? ?? passedAvatarUrl;
                 final email = liveData?['email'] as String?;
-                final bio = liveData?['bio'] as String? ?? args?['bio'] as String?;
+                final bio =
+                    liveData?['bio'] as String? ?? args?['bio'] as String?;
 
-                // Watch the other user's privacy settings
                 return StreamBuilder<DocumentSnapshot>(
                   stream: FirebaseFirestore.instance
                       .collection('user_settings')
                       .doc(userId)
                       .snapshots(),
                   builder: (context, settingsSnapshot) {
-                    final settingsData =
-                        settingsSnapshot.data?.data() as Map<String, dynamic>?;
+                    final settingsData = settingsSnapshot.data?.data()
+                        as Map<String, dynamic>?;
 
                     final profilePhotoVisible =
-                        settingsData?['profile_photo_visible'] as bool? ?? true;
+                        settingsData?['profile_photo_visible'] as bool? ??
+                            true;
                     final phoneNumberVisible =
-                        settingsData?['phone_number_visible'] as bool? ?? true;
+                        settingsData?['phone_number_visible'] as bool? ??
+                            true;
                     final lastSeenVisible =
                         settingsData?['last_seen_visible'] as bool? ?? true;
                     final voiceVideoCallsVisible =
-                        settingsData?['voice_video_calls_visible'] as bool? ?? true;
+                        settingsData?['voice_video_calls_visible']
+                                as bool? ??
+                            true;
 
-                    // Hide avatar if the other user chose to hide it
-                    final avatarUrl = profilePhotoVisible ? rawAvatarUrl : null;
-
-                    // Hide phone number unless they allow it
+                    final avatarUrl =
+                        profilePhotoVisible ? rawAvatarUrl : null;
                     final phoneNumber = phoneNumberVisible
                         ? (liveData?['phone_number'] as String?)
                         : null;
-
-                    // Last seen (only if visible)
                     final lastSeen = lastSeenVisible
                         ? (liveData?['last_seen'] as Timestamp?)
                         : null;
@@ -117,33 +134,35 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                           .doc(currentUserId)
                           .snapshots(),
                       builder: (context, currentUserSnapshot) {
-                        final currentUserData =
-                            currentUserSnapshot.data?.data() as Map<String, dynamic>?;
-                        final blockedList =
-                            List<String>.from(currentUserData?['blocked_users'] ?? []);
-                        final contactsList =
-                            List<String>.from(currentUserData?['contacts'] ?? []);
+                        final currentUserData = currentUserSnapshot.data
+                            ?.data() as Map<String, dynamic>?;
+                        final blockedList = List<String>.from(
+                            currentUserData?['blocked_users'] ?? []);
+                        final contactsList = List<String>.from(
+                            currentUserData?['contacts'] ?? []);
                         final isBlocked = blockedList.contains(userId);
                         final isContact = contactsList.contains(userId);
 
                         return SingleChildScrollView(
                           child: Column(
                             children: [
-                              const SizedBox(height: 32),
-
-                              // Profile Avatar (respects profilePhotoVisible)
-                              Center(child: _buildAvatar(avatarUrl, displayName)),
-
                               const SizedBox(height: 24),
 
-                              // Display Name
+                              // Avatar
+                              Center(
+                                child: _buildAvatar(
+                                    theme, avatarUrl, displayName),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // Name with verified badge
                               VerifiedUsername(
                                 username: displayName,
                                 email: email,
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
                                 ),
                                 badgeSize: 18,
                                 spacing: 8,
@@ -151,104 +170,114 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
                               const SizedBox(height: 4),
 
-                              if (userUsername != null && userUsername.isNotEmpty)
+                              if (userUsername != null &&
+                                  userUsername.isNotEmpty)
                                 Text(
                                   '@$userUsername',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.white.withOpacity(0.5),
+                                  style: theme.textTheme.bodyMedium
+                                      ?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.55),
+                                    fontSize: 14,
                                   ),
                                 ),
 
-                              const SizedBox(height: 8),
-
-                              // Phone number (only if visible)
-                              if (phoneNumber != null && phoneNumber.isNotEmpty)
+                              // Phone number
+                              if (phoneNumber != null &&
+                                  phoneNumber.isNotEmpty)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 4),
+                                  padding: const EdgeInsets.only(top: 6),
                                   child: Text(
                                     phoneNumber,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.white.withOpacity(0.4),
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.5),
                                     ),
                                   ),
                                 ),
 
-                              // Last seen (only if visible)
+                              // Last seen
                               if (lastSeen != null)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 4),
                                   child: Text(
                                     'Last seen ${_formatLastSeen(lastSeen.toDate())}',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.white.withOpacity(0.35),
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.45),
                                     ),
                                   ),
                                 ),
 
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 20),
 
                               // Bio
                               if (bio != null && bio.isNotEmpty)
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 32),
                                   child: Container(
                                     padding: const EdgeInsets.all(16),
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.05),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: Colors.white.withOpacity(0.08),
-                                      ),
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.05),
+                                      borderRadius:
+                                          BorderRadius.circular(12),
                                     ),
                                     child: Text(
                                       bio,
                                       textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.7),
-                                        fontSize: 15,
+                                      style: theme.textTheme.bodyMedium
+                                          ?.copyWith(
+                                        color: theme.colorScheme.onSurface
+                                            .withOpacity(0.75),
                                         height: 1.5,
                                       ),
                                     ),
                                   ),
                                 ),
 
-                              const SizedBox(height: 32),
+                              const SizedBox(height: 28),
 
-                              // Action Buttons Row
+                              // Primary actions
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 32),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 32),
                                 child: Row(
                                   children: [
-                                    // Message Button
                                     Expanded(
-                                      child: _buildActionButton(
-                                        icon: Icons.message,
+                                      child: _buildPrimaryButton(
+                                        theme,
+                                        icon: Icons.message_outlined,
                                         label: 'Message',
-                                        gradient: const [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
                                         onTap: isBlocked
-                                            ? () {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  const SnackBar(
-                                                    content: Text('Unblock user to send messages'),
-                                                    backgroundColor: Colors.orange,
-                                                  ),
-                                                );
-                                              }
+                                            ? () => _toast(
+                                                'Unblock user to send messages',
+                                                error: true)
                                             : () async {
-                                                final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-                                                final chat = await chatProvider.startDirectChat(userId);
-                                                if (chat != null && mounted) {
+                                                final chatProvider =
+                                                    Provider.of<ChatProvider>(
+                                                        context,
+                                                        listen: false);
+                                                final chat =
+                                                    await chatProvider
+                                                        .startDirectChat(
+                                                            userId);
+                                                if (chat != null &&
+                                                    mounted) {
                                                   Navigator.pushNamed(
                                                     context,
                                                     '/chat',
                                                     arguments: {
                                                       'chatId': chat['id'],
-                                                      'chatName': displayName,
-                                                      'chatAvatar': avatarUrl,
+                                                      'chatName':
+                                                          displayName,
+                                                      'chatAvatar':
+                                                          avatarUrl,
                                                       'isGroup': false,
+                                                      'otherUserId': userId,
                                                     },
                                                   );
                                                 }
@@ -256,70 +285,75 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-
-                                    // Call Button — respects voiceVideoCallsVisible
                                     Expanded(
-                                      child: _buildActionButton(
-                                        icon: Icons.call,
+                                      child: _buildPrimaryButton(
+                                        theme,
+                                        icon: Icons.call_outlined,
                                         label: 'Call',
-                                        gradient: voiceVideoCallsVisible
-                                            ? const [Color(0xFF10B981), Color(0xFF06B6D4)]
-                                            : [Colors.grey.shade700, Colors.grey.shade800],
                                         onTap: isBlocked
-                                            ? () {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  const SnackBar(
-                                                    content: Text('Unblock user to call'),
-                                                    backgroundColor: Colors.orange,
-                                                  ),
-                                                );
-                                              }
+                                            ? () => _toast(
+                                                'Unblock user to call',
+                                                error: true)
                                             : !voiceVideoCallsVisible
-                                                ? () {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text('This user does not accept calls'),
-                                                        backgroundColor: Colors.orange,
-                                                      ),
-                                                    );
-                                                  }
-                                                : () {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text('Call feature coming soon'),
-                                                      ),
-                                                    );
-                                                  },
+                                                ? () => _toast(
+                                                    'This user does not accept calls',
+                                                    error: true)
+                                                : () => _toast(
+                                                    'Call feature coming soon'),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
 
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 12),
 
-                              // Secondary Actions
+                              // Secondary actions
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 32),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 32),
                                 child: Row(
                                   children: [
                                     Expanded(
                                       child: _buildSecondaryButton(
-                                        icon: isContact ? Icons.person_remove : Icons.person_add,
-                                        label: isContact ? 'Remove' : 'Add Contact',
-                                        color: isContact ? Colors.orange : const Color(0xFF10B981),
+                                        theme,
+                                        icon: isContact
+                                            ? Icons.person_remove_outlined
+                                            : Icons.person_add_outlined,
+                                        label: isContact
+                                            ? 'Remove'
+                                            : 'Add Contact',
+                                        color: isContact
+                                            ? const Color(0xFFE0954A)
+                                            : const Color(0xFF4FAE4F),
                                         isLoading: _isAddingContact,
-                                        onTap: () => _toggleContact(currentUserId, userId, isContact),
+                                        onTap: () => _toggleContact(
+                                            currentUserId,
+                                            userId,
+                                            isContact),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: _buildSecondaryButton(
-                                        icon: isBlocked ? Icons.lock_open : Icons.block,
-                                        label: isBlocked ? 'Unblock' : 'Block',
-                                        color: isBlocked ? Colors.grey : Colors.red,
+                                        theme,
+                                        icon: isBlocked
+                                            ? Icons.lock_open
+                                            : Icons.block,
+                                        label: isBlocked
+                                            ? 'Unblock'
+                                            : 'Block',
+                                        color: isBlocked
+                                            ? theme.colorScheme.onSurface
+                                                .withOpacity(0.6)
+                                            : theme.colorScheme.error,
                                         isLoading: _isBlocking,
-                                        onTap: () => _toggleBlock(currentUserId, userId, isBlocked, displayName),
+                                        onTap: () => _toggleBlock(
+                                          currentUserId,
+                                          userId,
+                                          isBlocked,
+                                          displayName,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -348,149 +382,121 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     return '${date.day}/${date.month}/${date.year}';
   }
 
-  Future<void> _toggleBlock(String currentUserId, String targetUserId, bool isBlocked, String displayName) async {
+  Future<void> _toggleBlock(
+    String currentUserId,
+    String targetUserId,
+    bool isBlocked,
+    String displayName,
+  ) async {
     setState(() => _isBlocking = true);
 
     try {
-      final userRef = FirebaseFirestore.instance.collection('users').doc(currentUserId);
+      final userRef =
+          FirebaseFirestore.instance.collection('users').doc(currentUserId);
 
       if (isBlocked) {
         await userRef.set({
           'blocked_users': FieldValue.arrayRemove([targetUserId]),
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Unblocked $displayName')),
-          );
-        }
+        _toast('Unblocked $displayName');
       } else {
         await userRef.set({
           'blocked_users': FieldValue.arrayUnion([targetUserId]),
           'contacts': FieldValue.arrayRemove([targetUserId]),
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Blocked $displayName'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        _toast('Blocked $displayName', error: true);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _toast('Error: $e', error: true);
     } finally {
-      setState(() => _isBlocking = false);
+      if (mounted) setState(() => _isBlocking = false);
     }
   }
 
-  Future<void> _toggleContact(String currentUserId, String targetUserId, bool isContact) async {
+  Future<void> _toggleContact(
+    String currentUserId,
+    String targetUserId,
+    bool isContact,
+  ) async {
     setState(() => _isAddingContact = true);
 
     try {
-      final userRef = FirebaseFirestore.instance.collection('users').doc(currentUserId);
+      final userRef =
+          FirebaseFirestore.instance.collection('users').doc(currentUserId);
 
       if (isContact) {
         await userRef.set({
           'contacts': FieldValue.arrayRemove([targetUserId]),
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Contact removed')),
-          );
-        }
+        _toast('Contact removed');
       } else {
         await userRef.set({
           'contacts': FieldValue.arrayUnion([targetUserId]),
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Contact added'),
-              backgroundColor: Color(0xFF10B981),
-            ),
-          );
-        }
+        _toast('Contact added');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _toast('Error: $e', error: true);
     } finally {
-      setState(() => _isAddingContact = false);
+      if (mounted) setState(() => _isAddingContact = false);
     }
   }
 
-  void _showReportDialog(BuildContext context, String? reportedUserId, String reportedDisplayName) {
+  void _showReportDialog(
+    BuildContext context,
+    String? reportedUserId,
+    String reportedDisplayName,
+  ) {
     final reasonController = TextEditingController();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Report $reportedDisplayName?',
-          style: const TextStyle(color: Colors.white, fontSize: 18),
-        ),
+      builder: (ctx) => AlertDialog(
+        title: Text('Report $reportedDisplayName?'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
+            const Text(
               'This will be reviewed by our team. False reports may result in account suspension.',
-              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: reasonController,
-              style: const TextStyle(color: Colors.white),
               maxLines: 3,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Reason for reporting (optional)',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFF8B5CF6)),
-                ),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () async {
-              final currentUserId = context.read<AuraAuthProvider>().user?.uid ??
-                                   context.read<AuraAuthProvider>().mockUserId;
+              final currentUserId =
+                  context.read<LumaAuthProvider>().user?.uid ??
+                      context.read<LumaAuthProvider>().mockUserId;
               if (currentUserId == null || reportedUserId == null) return;
 
-              Navigator.pop(context);
+              Navigator.pop(ctx);
 
               try {
-                await FirebaseFirestore.instance.collection('reports').add({
+                await FirebaseFirestore.instance
+                    .collection('reports')
+                    .add({
                   'reporter_id': currentUserId,
                   'reported_user_id': reportedUserId,
                   'reported_username': reportedDisplayName,
-                  'reason': reasonController.text.trim().isEmpty ? 'No reason provided' : reasonController.text.trim(),
+                  'reason': reasonController.text.trim().isEmpty
+                      ? 'No reason provided'
+                      : reasonController.text.trim(),
                   'status': 'pending',
                   'created_at': FieldValue.serverTimestamp(),
                 });
@@ -499,19 +505,24 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Report submitted. Thank you.'),
-                      backgroundColor: Color(0xFF8B5CF6),
+                      behavior: SnackBarBehavior.floating,
                     ),
                   );
                 }
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to report: $e'), backgroundColor: Colors.red),
+                    SnackBar(
+                      content: Text('Failed to report: $e'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
                   );
                 }
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFE0954A),
+            ),
             child: const Text('Report'),
           ),
         ],
@@ -519,32 +530,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildAvatar(String? avatarUrl, String displayName) {
-    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+  Widget _buildAvatar(
+    ThemeData theme,
+    String? avatarUrl,
+    String displayName,
+  ) {
+    final initial =
+        displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+    const size = 110.0;
 
     if (avatarUrl == null || avatarUrl.isEmpty) {
       return Container(
-        width: 120,
-        height: 120,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: const LinearGradient(
-            colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF8B5CF6).withOpacity(0.3),
-              blurRadius: 30,
-              spreadRadius: 5,
-            ),
-          ],
+          color: theme.colorScheme.primary.withOpacity(0.15),
         ),
         child: Center(
           child: Text(
             initial,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 48,
+            style: TextStyle(
+              color: theme.colorScheme.primary,
+              fontSize: 44,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -552,63 +560,53 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       );
     }
 
-    return Container(
-      width: 120,
-      height: 120,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF8B5CF6).withOpacity(0.3),
-            blurRadius: 30,
-            spreadRadius: 5,
-          ),
-        ],
-      ),
-      child: ClipOval(
-        child: CachedNetworkImage(
-          imageUrl: avatarUrl,
-          width: 120,
-          height: 120,
-          fit: BoxFit.cover,
-          placeholder: (context, url) => Container(
-            color: const Color(0xFF1a103c),
-            child: const Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(Color(0xFF8B5CF6)),
-              ),
+    return ClipOval(
+      child: CachedNetworkImage(
+        imageUrl: avatarUrl,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          width: size,
+          height: size,
+          color: theme.colorScheme.primary.withOpacity(0.1),
+          child: const Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
           ),
-          errorWidget: (context, url, error) {
-            debugPrint('PublicProfile avatar error: $error');
-            return Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  initial,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 48,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            );
-          },
         ),
+        errorWidget: (context, url, error) {
+          debugPrint('PublicProfile avatar error: $error');
+          return Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: theme.colorScheme.primary.withOpacity(0.15),
+            ),
+            child: Center(
+              child: Text(
+                initial,
+                style: TextStyle(
+                  color: theme.colorScheme.primary,
+                  fontSize: 44,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildActionButton({
+  Widget _buildPrimaryButton(
+    ThemeData theme, {
     required IconData icon,
     required String label,
-    required List<Color> gradient,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -616,15 +614,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          gradient: LinearGradient(colors: gradient),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: gradient[0].withOpacity(0.3),
-              blurRadius: 20,
-              spreadRadius: -5,
-            ),
-          ],
+          color: theme.colorScheme.primary,
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -645,7 +636,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildSecondaryButton({
+  Widget _buildSecondaryButton(
+    ThemeData theme, {
     required IconData icon,
     required String label,
     required Color color,
@@ -691,16 +683,23 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildErrorState(String message) {
+  Widget _buildErrorState(ThemeData theme, String message) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, color: Colors.white.withOpacity(0.3), size: 48),
+          Icon(
+            Icons.error_outline,
+            color: theme.colorScheme.onSurface.withOpacity(0.3),
+            size: 48,
+          ),
           const SizedBox(height: 16),
           Text(
             message,
-            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 16),
+            style: TextStyle(
+              color: theme.colorScheme.onSurface.withOpacity(0.5),
+              fontSize: 16,
+            ),
           ),
         ],
       ),
