@@ -1,11 +1,10 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../utils/verified_badge.dart';
 import '../../services/online_status_service.dart';
 
@@ -28,6 +27,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   final String _recentSearchesKey = 'global_search_recent';
   StreamSubscription? _onlineStatusSubscription;
   Map<String, bool> _onlineStatus = {};
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -38,16 +38,19 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _onlineStatusSubscription?.cancel();
     super.dispose();
   }
 
-  // ─── Recent Searches ───
-
+  // ═══════════════════════════════════════════════════════════════════════
+  // RECENT SEARCHES
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadRecentSearches() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _recentSearches = prefs.getStringList(_recentSearchesKey) ?? [];
     });
@@ -82,36 +85,49 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     await _saveRecentSearches();
   }
 
-  // ─── Real-time Online Status ───
-
+  // ═══════════════════════════════════════════════════════════════════════
+  // ONLINE STATUS
+  // ═══════════════════════════════════════════════════════════════════════
   void _subscribeToOnlineStatus() {
-    final firestore = FirebaseFirestore.instance;
-    _onlineStatusSubscription = firestore
+    _onlineStatusSubscription = FirebaseFirestore.instance
         .collection('users')
         .snapshots()
         .listen((snapshot) {
-          if (mounted) {
-            setState(() {
-              for (final doc in snapshot.docs) {
-                final data = doc.data();
-                final lastSeen = data['last_seen'] as Timestamp?;
-                _onlineStatus[doc.id] = OnlineStatusService.isUserOnline(lastSeen);
-              }
-            });
-          }
-        });
+      if (!mounted) return;
+      final updated = <String, bool>{};
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final lastSeen = data['last_seen'] as Timestamp?;
+        updated[doc.id] = OnlineStatusService.isUserOnline(lastSeen);
+      }
+      setState(() => _onlineStatus = updated);
+    });
   }
 
-  // ─── Search ───
-
-  Future<void> _searchUsers(String query) async {
-    if (query.trim().isEmpty) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // SEARCH
+  // ═══════════════════════════════════════════════════════════════════════
+  void _onSearchChanged(String value) {
+    setState(() {});
+    _debounce?.cancel();
+    if (value.trim().isEmpty) {
       setState(() {
         _users = [];
+        _groups = [];
+        _channels = [];
         _error = null;
+        _isLoading = false;
       });
       return;
     }
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _searchUsers(value);
+    });
+  }
+
+  Future<void> _searchUsers(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
 
     HapticFeedback.lightImpact();
 
@@ -122,121 +138,74 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
     try {
       final firestore = FirebaseFirestore.instance;
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final currentUserId =
+          authProvider.user?.uid ?? authProvider.mockUserId;
 
-      final searchTerm = query.trim().toLowerCase();
-      debugPrint('Searching for: $searchTerm');
+      final searchTerm = trimmed.toLowerCase();
+      final searchEnd = '$searchTerm\uf8ff';
 
-      // FIXED: Search by username AND display_name separately, then merge results
-      // Firestore only supports one range query per composite index, so we do two queries
-      final usernameSnapshot = await firestore
+      // ── Users: search by username and display_name (2 queries) ──
+      final results = <String, Map<String, dynamic>>{};
+
+      final usernameSnap = await firestore
           .collection('users')
           .where('username', isGreaterThanOrEqualTo: searchTerm)
-          .where('username', isLessThanOrEqualTo: '$searchTerm\uf8ff')
+          .where('username', isLessThanOrEqualTo: searchEnd)
           .limit(20)
           .get();
 
-      final displayNameSnapshot = await firestore
+      for (final doc in usernameSnap.docs) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        results[doc.id] = data;
+      }
+
+      final displayNameSnap = await firestore
           .collection('users')
           .where('display_name', isGreaterThanOrEqualTo: searchTerm)
-          .where('display_name', isLessThanOrEqualTo: '$searchTerm\uf8ff')
+          .where('display_name', isLessThanOrEqualTo: searchEnd)
           .limit(20)
           .get();
 
-      // Also search by exact username match (case-insensitive via toLowerCase in app)
-      // And search by email prefix for email-based accounts
-      final emailSnapshot = await firestore
-          .collection('users')
-          .where('email', isGreaterThanOrEqualTo: searchTerm)
-          .where('email', isLessThanOrEqualTo: '$searchTerm\uf8ff')
-          .limit(10)
-          .get();
-
-      debugPrint('Username results: ${usernameSnapshot.docs.length}');
-      debugPrint('Display name results: ${displayNameSnapshot.docs.length}');
-      debugPrint('Email results: ${emailSnapshot.docs.length}');
-
-      // Merge all results, deduplicate by ID
-      final allResults = <String, Map<String, dynamic>>{};
-
-      for (final doc in usernameSnapshot.docs) {
+      for (final doc in displayNameSnap.docs) {
         final data = doc.data();
         data['id'] = doc.id;
-        data['search_type'] = 'user';
-        allResults[doc.id] = data;
+        results[doc.id] = data;
       }
 
-      for (final doc in displayNameSnapshot.docs) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        data['search_type'] = 'user';
-        allResults[doc.id] = data;
-      }
-
-      for (final doc in emailSnapshot.docs) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        data['search_type'] = 'user';
-        allResults[doc.id] = data;
-      }
-
-      // Also do a simple contains check for usernames that might not match prefix
-      // This catches cases where username has the search term in the middle
-      final allUsersSnapshot = await firestore
-          .collection('users')
-          .limit(100)
-          .get();
-
-      for (final doc in allUsersSnapshot.docs) {
-        final data = doc.data();
-        final username = (data['username'] as String? ?? '').toLowerCase();
-        final displayName = (data['display_name'] as String? ?? '').toLowerCase();
-        final email = (data['email'] as String? ?? '').toLowerCase();
-
-        if (username.contains(searchTerm) ||
-            displayName.contains(searchTerm) ||
-            email.contains(searchTerm)) {
-          data['id'] = doc.id;
-          data['search_type'] = 'user';
-          allResults[doc.id] = data;
-        }
-      }
-
-      final users = allResults.values.toList();
-
-      final filtered = users
+      final filtered = results.values
           .where((u) => u['id'] != currentUserId)
           .toList();
 
-      debugPrint('Total unique users found: ${filtered.length}');
-
-      // Search groups
-      final groupsSnapshot = await firestore
+      // ── Groups ──
+      final groupsSnap = await firestore
           .collection('chats')
           .where('type', isEqualTo: 'group')
           .where('name', isGreaterThanOrEqualTo: searchTerm)
-          .where('name', isLessThanOrEqualTo: '$searchTerm\uf8ff')
+          .where('name', isLessThanOrEqualTo: searchEnd)
           .limit(10)
           .get();
 
-      final groups = groupsSnapshot.docs
-          .map((doc) => {'id': doc.id, ...doc.data(), 'search_type': 'group'})
+      final groups = groupsSnap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
           .toList();
 
-      // Search channels
-      final channelsSnapshot = await firestore
+      // ── Channels ──
+      final channelsSnap = await firestore
           .collection('chats')
           .where('type', isEqualTo: 'channel')
           .where('name', isGreaterThanOrEqualTo: searchTerm)
-          .where('name', isLessThanOrEqualTo: '$searchTerm\uf8ff')
+          .where('name', isLessThanOrEqualTo: searchEnd)
           .limit(10)
           .get();
 
-      final channels = channelsSnapshot.docs
-          .map((doc) => {'id': doc.id, ...doc.data(), 'search_type': 'channel'})
+      final channels = channelsSnap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
           .toList();
 
+      if (!mounted) return;
       setState(() {
         _users = filtered;
         _groups = groups;
@@ -244,63 +213,64 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         _isLoading = false;
       });
 
-      await _addRecentSearch(query);
+      await _addRecentSearch(trimmed);
     } catch (e) {
       debugPrint('Search error: $e');
+      if (!mounted) return;
       setState(() {
-        _error = 'Search failed: $e';
+        _error = 'Search failed. Try again.';
         _isLoading = false;
       });
     }
   }
 
-  // ─── Chat ───
-
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _startChat(Map<String, dynamic> user) async {
     setState(() => _isLoading = true);
 
     try {
       final firestore = FirebaseFirestore.instance;
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
-
-      if (currentUserId == null) {
-        throw Exception('Not authenticated');
-      }
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final currentUserId =
+          authProvider.user?.uid ?? authProvider.mockUserId;
+      if (currentUserId == null) throw Exception('Not authenticated');
 
       final targetUserId = user['id'] as String;
 
-      // Check if a direct chat already exists
-      final chatSnapshot = await firestore
+      // Check for existing direct chat
+      final chatSnap = await firestore
           .collection('chats')
           .where('type', isEqualTo: 'direct')
           .where('participants', arrayContains: currentUserId)
           .get();
 
       String? existingChatId;
-      for (final doc in chatSnapshot.docs) {
-        final data = doc.data();
-        final participants = data['participants'] as List<dynamic>;
+      for (final doc in chatSnap.docs) {
+        final participants = doc.data()['participants'] as List<dynamic>;
         if (participants.contains(targetUserId)) {
           existingChatId = doc.id;
           break;
         }
       }
 
+      if (!mounted) return;
+
       if (existingChatId != null) {
-        if (mounted) {
-          Navigator.pushNamed(
+        Navigator.pushNamed(
           context,
           '/chat',
           arguments: {
             'chatId': existingChatId,
-            'chatName': user['display_name'] ?? user['username'] ?? 'Chat',
+            'chatName':
+                user['display_name'] ?? user['username'] ?? 'Chat',
             'chatAvatar': user['avatar_url'],
             'isGroup': false,
+            'otherUserId': targetUserId,
           },
         );
-        }
-        setState(() => _isLoading = false);
         return;
       }
 
@@ -314,8 +284,14 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         'type': 'direct',
         'participants': [currentUserId, targetUserId],
         'participants_data': {
-          currentUserId: {'role': 'member', 'joined_at': FieldValue.serverTimestamp()},
-          targetUserId: {'role': 'member', 'joined_at': FieldValue.serverTimestamp()},
+          currentUserId: {
+            'role': 'member',
+            'joined_at': FieldValue.serverTimestamp()
+          },
+          targetUserId: {
+            'role': 'member',
+            'joined_at': FieldValue.serverTimestamp()
+          },
         },
         'created_by': currentUserId,
         'created_at': FieldValue.serverTimestamp(),
@@ -323,84 +299,117 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         'last_message_at': FieldValue.serverTimestamp(),
       });
 
-      if (mounted) {
-        Navigator.pushNamed(
-          context,
-          '/chat',
-          arguments: {
-            'chatId': chatId,
-            'chatName': user['display_name'] ?? user['username'] ?? 'Chat',
-            'chatAvatar': user['avatar_url'],
-            'isGroup': false,
-          },
-        );
-      }
+      if (!mounted) return;
+      Navigator.pushNamed(
+        context,
+        '/chat',
+        arguments: {
+          'chatId': chatId,
+          'chatName':
+              user['display_name'] ?? user['username'] ?? 'Chat',
+          'chatAvatar': user['avatar_url'],
+          'isGroup': false,
+          'otherUserId': targetUserId,
+        },
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error starting chat: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not start chat'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _joinGroup(Map<String, dynamic> group) async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
     if (userId == null) return;
 
-    final groupId = group['id'];
-    final firestore = FirebaseFirestore.instance;
+    try {
+      final firestore = FirebaseFirestore.instance;
+      final groupId = group['id'];
 
-    await firestore.collection('chats').doc(groupId).update({
-      'participants': FieldValue.arrayUnion([userId]),
-      'participants_data.$userId': {
-        'role': 'member',
-        'joined_at': FieldValue.serverTimestamp(),
-      },
-      'member_count': FieldValue.increment(1),
-    });
+      await firestore.collection('chats').doc(groupId).update({
+        'participants': FieldValue.arrayUnion([userId]),
+        'participants_data.$userId': {
+          'role': 'member',
+          'joined_at': FieldValue.serverTimestamp(),
+        },
+        'member_count': FieldValue.increment(1),
+      });
 
-    await firestore.collection('chats').doc(groupId).collection('messages').add({
-      'type': 'system',
-      'content': 'A new member joined',
-      'created_at': FieldValue.serverTimestamp(),
-    });
+      await firestore
+          .collection('chats')
+          .doc(groupId)
+          .collection('messages')
+          .add({
+        'type': 'system',
+        'content': 'A new member joined',
+        'created_at': FieldValue.serverTimestamp(),
+      });
 
-    if (mounted) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Joined ${group['name'] ?? 'group'}')),
+        SnackBar(
+          content: Text('Joined ${group['name'] ?? 'group'}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not join'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     }
   }
 
   Future<void> _joinChannel(Map<String, dynamic> channel) async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
     if (userId == null) return;
 
-    final channelId = channel['id'];
-    final firestore = FirebaseFirestore.instance;
+    try {
+      final firestore = FirebaseFirestore.instance;
+      final channelId = channel['id'];
 
-    await firestore.collection('chats').doc(channelId).update({
-      'participants': FieldValue.arrayUnion([userId]),
-      'participants_data.$userId': {
-        'role': 'subscriber',
-        'joined_at': FieldValue.serverTimestamp(),
-      },
-      'member_count': FieldValue.increment(1),
-    });
+      await firestore.collection('chats').doc(channelId).update({
+        'participants': FieldValue.arrayUnion([userId]),
+        'participants_data.$userId': {
+          'role': 'subscriber',
+          'joined_at': FieldValue.serverTimestamp(),
+        },
+        'member_count': FieldValue.increment(1),
+      });
 
-    if (mounted) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Subscribed to ${channel['name'] ?? 'channel'}')),
+        SnackBar(
+          content: Text('Subscribed to ${channel['name'] ?? 'channel'}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not subscribe'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     }
   }
 
-    void _viewPublicProfile(Map<String, dynamic> user) {
+  void _viewPublicProfile(Map<String, dynamic> user) {
     Navigator.pushNamed(
       context,
       '/public_profile',
@@ -419,233 +428,101 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     _searchController.clear();
     setState(() {
       _users = [];
+      _groups = [];
+      _channels = [];
       _error = null;
     });
   }
 
-  bool _isUserOnline(String userId) {
-    return _onlineStatus[userId] ?? false;
-  }
+  bool _isUserOnline(String userId) => _onlineStatus[userId] ?? false;
 
-  // ─── Build ───
-
+  // ═══════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0A0A0F),
-              Color(0xFF1a103c),
-              Color(0xFF0d1b2a),
-              Color(0xFF0A0A0F),
-            ],
-            stops: [0.0, 0.3, 0.7, 1.0],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Header
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.08),
-                          ),
-                        ),
-                        child: Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white.withOpacity(0.7),
-                          size: 18,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    const Text(
-                      'Discover',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ],
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: const Text('Discover'),
+        backgroundColor: theme.scaffoldBackgroundColor,
+        elevation: 0,
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            // Search bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: TextField(
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                autofocus: true,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface,
+                  fontSize: 16,
+                ),
+                onChanged: _onSearchChanged,
+                decoration: InputDecoration(
+                  hintText: 'Search by username...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: _clearSearch,
+                        )
+                      : null,
                 ),
               ),
+            ),
 
-              const SizedBox(height: 16),
-
-              // Glassmorphism Search Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.1),
-                          width: 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF8B5CF6).withOpacity(0.1),
-                            blurRadius: 20,
-                            spreadRadius: -5,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.search_rounded,
-                            color: Colors.white.withOpacity(0.4),
-                            size: 22,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _searchController,
-                              focusNode: _searchFocusNode,
-                              autofocus: true,
-                              style: const TextStyle(color: Colors.white, fontSize: 16),
-                              cursorColor: const Color(0xFF8B5CF6),
-                              decoration: InputDecoration(
-                                hintText: 'Search by username...',
-                                hintStyle: TextStyle(
-                                  color: Colors.white.withOpacity(0.3),
-                                  fontSize: 16,
-                                ),
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                              ),
-                              onChanged: (value) {
-                                setState(() {});
-                                Future.delayed(const Duration(milliseconds: 500), () {
-                                  if (_searchController.text == value) {
-                                    _searchUsers(value);
-                                  }
-                                });
-                              },
-                            ),
-                          ),
-                          if (_searchController.text.isNotEmpty)
-                            GestureDetector(
-                              onTap: _clearSearch,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.1),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.close_rounded,
-                                  color: Colors.white.withOpacity(0.6),
-                                  size: 16,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Body Content
-              Expanded(
-                child: _buildBody(),
-              ),
-            ],
-          ),
+            // Body
+            Expanded(child: _buildBody(theme)),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildBody() {
-    // Loading state (initial)
-    if (_isLoading && _users.isEmpty && _searchController.text.isNotEmpty) {
+  Widget _buildBody(ThemeData theme) {
+    // Loading
+    if (_isLoading &&
+        _users.isEmpty &&
+        _searchController.text.isNotEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  const Color(0xFF8B5CF6).withOpacity(0.8),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Searching...',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.3),
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
+        child: CircularProgressIndicator(
+            color: theme.colorScheme.primary),
       );
     }
 
-    // Error state
+    // Error
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.error_outline,
-                  size: 32,
-                  color: Colors.red.withOpacity(0.8),
-                ),
-              ),
+              Icon(Icons.error_outline,
+                  size: 48,
+                  color: theme.colorScheme.error.withOpacity(0.7)),
               const SizedBox(height: 16),
               Text(
                 _error!,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 14,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.6),
                 ),
               ),
-              const SizedBox(height: 24),
-              _buildGlassButton(
+              const SizedBox(height: 20),
+              TextButton.icon(
                 onPressed: () => _searchUsers(_searchController.text),
-                label: 'Retry',
-                icon: Icons.refresh_rounded,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
               ),
             ],
           ),
@@ -653,164 +530,294 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       );
     }
 
-    // Empty search state (no query yet)
+    // Empty state (no query)
     if (_searchController.text.isEmpty) {
-      return _buildEmptyState();
+      return _buildEmptyState(theme);
     }
 
-    // No results found
-    if (_users.isEmpty) {
+    // No results
+    if (_users.isEmpty && _groups.isEmpty && _channels.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.03),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.06),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.person_search_outlined,
+                  size: 60,
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.2)),
+              const SizedBox(height: 16),
+              Text(
+                'No results found',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              child: Icon(
-                Icons.person_search_outlined,
-                size: 40,
-                color: Colors.white.withOpacity(0.15),
+              const SizedBox(height: 6),
+              Text(
+                'Try a different search term',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.5),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'No users found',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Try a different search term',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.2),
-                fontSize: 13,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }
 
-    // Results list
-    final totalResults = _users.length + _groups.length + _channels.length;
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      itemCount: totalResults + (_users.isNotEmpty ? 1 : 0) + (_groups.isNotEmpty ? 1 : 0) + (_channels.isNotEmpty ? 1 : 0),
-      itemBuilder: (context, index) {
-        int currentIndex = 0;
-
-        // Users section
-        if (_users.isNotEmpty) {
-          if (index == currentIndex) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16, left: 4, top: 8),
-              child: Text(
-                'Users',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            );
-          }
-          currentIndex++;
-          if (index >= currentIndex && index < currentIndex + _users.length) {
-            return _buildGlowingUserCard(_users[index - currentIndex]);
-          }
-          currentIndex += _users.length;
-        }
-
-        // Groups section
-        if (_groups.isNotEmpty) {
-          if (index == currentIndex) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16, left: 4, top: 16),
-              child: Text(
-                'Groups',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            );
-          }
-          currentIndex++;
-          if (index >= currentIndex && index < currentIndex + _groups.length) {
-            return _buildGroupChannelCard(_groups[index - currentIndex], isGroup: true);
-          }
-          currentIndex += _groups.length;
-        }
-
-        // Channels section
-        if (_channels.isNotEmpty) {
-          if (index == currentIndex) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16, left: 4, top: 16),
-              child: Text(
-                'Channels',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            );
-          }
-          currentIndex++;
-          if (index >= currentIndex && index < currentIndex + _channels.length) {
-            return _buildGroupChannelCard(_channels[index - currentIndex], isGroup: false);
-          }
-        }
-
-        return const SizedBox.shrink();
-      },
+    // Results
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        if (_users.isNotEmpty) ...[
+          _sectionHeader(theme, 'USERS'),
+          ..._users.map((u) => _userTile(theme, u)),
+        ],
+        if (_groups.isNotEmpty) ...[
+          _sectionHeader(theme, 'GROUPS'),
+          ..._groups.map((g) => _groupChannelTile(theme, g, isGroup: true)),
+        ],
+        if (_channels.isNotEmpty) ...[
+          _sectionHeader(theme, 'CHANNELS'),
+          ..._channels.map(
+              (c) => _groupChannelTile(theme, c, isGroup: false)),
+        ],
+      ],
     );
   }
 
-  Widget _buildEmptyState() {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      children: [
-        // Recent Searches
-        if (_recentSearches.isNotEmpty) ...[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Recent',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              GestureDetector(
-                onTap: _clearRecentSearches,
-                child: Text(
-                  'Clear all',
-                  style: TextStyle(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.8),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+  Widget _sectionHeader(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+
+  Widget _userTile(ThemeData theme, Map<String, dynamic> user) {
+    final userId = user['id'] as String? ?? '';
+    final username = user['username'] as String? ?? 'Unknown';
+    final displayName =
+        user['display_name'] as String? ?? username;
+    final avatarUrl = user['avatar_url'] as String?;
+    final bio = user['bio'] as String?;
+    final email = user['email'] as String?;
+    final isOnline = _isUserOnline(userId);
+
+    return ListTile(
+      onTap: () => _viewPublicProfile(user),
+      leading: Stack(
+        children: [
+          CircleAvatar(
+            radius: 26,
+            backgroundColor:
+                theme.colorScheme.primary.withOpacity(0.15),
+            backgroundImage:
+                (avatarUrl != null && avatarUrl.isNotEmpty)
+                    ? NetworkImage(avatarUrl)
+                    : null,
+            child: (avatarUrl == null || avatarUrl.isEmpty)
+                ? Text(
+                    displayName.isNotEmpty
+                        ? displayName[0].toUpperCase()
+                        : '?',
+                    style: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 18,
+                    ),
+                  )
+                : null,
+          ),
+          if (isOnline)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4FAE4F),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: theme.scaffoldBackgroundColor,
+                    width: 2,
                   ),
                 ),
               ),
-            ],
+            ),
+        ],
+      ),
+      title: VerifiedUsername(
+        username: displayName,
+        email: email,
+        style: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 15,
+        ),
+        badgeSize: 14,
+        spacing: 4,
+      ),
+      subtitle: Text(
+        bio != null && bio.isNotEmpty ? bio : '@$username',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          fontSize: 13,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.person_outline, size: 20),
+            color: theme.colorScheme.onSurface.withOpacity(0.6),
+            tooltip: 'View profile',
+            onPressed: () => _viewPublicProfile(user),
           ),
-          const SizedBox(height: 12),
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline, size: 20),
+            color: theme.colorScheme.primary,
+            tooltip: 'Start chat',
+            onPressed: () => _startChat(user),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _groupChannelTile(
+    ThemeData theme,
+    Map<String, dynamic> item, {
+    required bool isGroup,
+  }) {
+    final name = item['name'] ?? 'Unknown';
+    final description = item['description'] ?? '';
+    final avatarUrl = item['avatar_url'] as String?;
+    final memberCount = item['member_count'] ??
+        (item['participants'] as List?)?.length ??
+        0;
+
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 26,
+        backgroundColor:
+            theme.colorScheme.primary.withOpacity(0.15),
+        backgroundImage:
+            (avatarUrl != null && avatarUrl.isNotEmpty)
+                ? NetworkImage(avatarUrl)
+                : null,
+        child: (avatarUrl == null || avatarUrl.isEmpty)
+            ? Icon(
+                isGroup ? Icons.group : Icons.campaign,
+                color: theme.colorScheme.primary,
+                size: 24,
+              )
+            : null,
+      ),
+      title: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              isGroup ? 'GROUP' : 'CHANNEL',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.primary,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              name,
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 15,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      subtitle: Text(
+        description.isNotEmpty
+            ? '$memberCount member${memberCount == 1 ? '' : 's'} • $description'
+            : '$memberCount member${memberCount == 1 ? '' : 's'}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          fontSize: 13,
+        ),
+      ),
+      trailing: TextButton(
+        onPressed: () =>
+            isGroup ? _joinGroup(item) : _joinChannel(item),
+        style: TextButton.styleFrom(
+          foregroundColor: theme.colorScheme.primary,
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+        child: Text(isGroup ? 'Join' : 'Subscribe'),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      children: [
+        if (_recentSearches.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'RECENT',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface
+                        .withOpacity(0.55),
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                TextButton(
+                  onPressed: _clearRecentSearches,
+                  style: TextButton.styleFrom(
+                    foregroundColor: theme.colorScheme.primary,
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  child: const Text('Clear all'),
+                ),
+              ],
+            ),
+          ),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -820,14 +827,14 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                   _searchController.text = search;
                   _searchUsers(search);
                 },
+                onLongPress: () => _removeRecentSearch(search),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.08),
-                    ),
+                    color: theme.colorScheme.onSurface
+                        .withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -835,23 +842,16 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                       Icon(
                         Icons.history,
                         size: 14,
-                        color: Colors.white.withOpacity(0.4),
+                        color: theme.colorScheme.onSurface
+                            .withOpacity(0.45),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         search,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.6),
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.75),
                           fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: () => _removeRecentSearch(search),
-                        child: Icon(
-                          Icons.close,
-                          size: 12,
-                          color: Colors.white.withOpacity(0.3),
                         ),
                       ),
                     ],
@@ -865,474 +865,30 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
         // Hint
         Center(
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.03),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.06),
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.search,
+                  size: 60,
+                  color: theme.colorScheme.onSurface
+                      .withOpacity(0.15),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Search for people, groups, and channels',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface
+                        .withOpacity(0.5),
                   ),
                 ),
-                child: Icon(
-                  Icons.search_rounded,
-                  size: 40,
-                  color: Colors.white.withOpacity(0.15),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Search for users by username',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.3),
-                  fontSize: 14,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
-    );
-  }
-
-    Widget _buildGlowingUserCard(Map<String, dynamic> user) {
-    final userId = user['id'] as String? ?? '';
-    final username = user['username'] as String? ?? 'Unknown';
-    final displayName = user['display_name'] as String? ?? username;
-    final avatarUrl = user['avatar_url'] as String?;
-    final bio = user['bio'] as String?;
-    final email = user['email'] as String?;
-    final isOnline = _isUserOnline(userId);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withOpacity(0.08),
-                  Colors.white.withOpacity(0.02),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isOnline
-                    ? const Color(0xFF06B6D4).withOpacity(0.3)
-                    : Colors.white.withOpacity(0.08),
-                width: 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: isOnline
-                      ? const Color(0xFF06B6D4).withOpacity(0.12)
-                      : const Color(0xFF8B5CF6).withOpacity(0.08),
-                  blurRadius: 20,
-                  spreadRadius: -5,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                // Avatar with online indicator
-                Stack(
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: avatarUrl != null && avatarUrl.isNotEmpty
-                            ? null
-                            : const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Color(0xFF8B5CF6),
-                                  Color(0xFF06B6D4),
-                                ],
-                              ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF8B5CF6).withOpacity(0.25),
-                            blurRadius: 16,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: ClipOval(
-                        child: avatarUrl != null && avatarUrl.isNotEmpty
-                            ? Image.network(
-                                avatarUrl,
-                                width: 56,
-                                height: 56,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return _buildAvatarFallback(username);
-                                },
-                              )
-                            : _buildAvatarFallback(username),
-                      ),
-                    ),
-                    if (isOnline)
-                      Positioned(
-                        right: 2,
-                        bottom: 2,
-                        child: Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF06B6D4),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: const Color(0xFF0A0A0F),
-                              width: 2.5,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF06B6D4).withOpacity(0.6),
-                                blurRadius: 8,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(width: 16),
-                // User info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // FIX: Use VerifiedUsername instead of plain Text
-                      VerifiedUsername(
-                        username: displayName,
-                        email: email, 
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                        badgeSize: 14,
-                        spacing: 6,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '@$username',
-                        style: TextStyle(
-                          color: const Color(0xFF8B5CF6).withOpacity(0.8),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      if (bio != null && bio.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          bio,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.4),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                // Action buttons
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildActionButton(
-                      icon: Icons.person_outline,
-                      onPressed: () => _viewPublicProfile(user),
-                      tooltip: 'View Profile',
-                    ),
-                    const SizedBox(width: 8),
-                    _buildActionButton(
-                      icon: Icons.chat_bubble_outline,
-                      onPressed: () => _startChat(user),
-                      tooltip: 'Start Chat',
-                      isPrimary: true,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGroupChannelCard(Map<String, dynamic> item, {required bool isGroup}) {
-    final name = item['name'] ?? 'Unknown';
-    final description = item['description'] ?? '';
-    final avatarUrl = item['avatar_url'] as String?;
-    final memberCount = item['member_count'] ?? (item['participants'] as List?)?.length ?? 0;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withOpacity(0.08),
-                  Colors.white.withOpacity(0.02),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isGroup 
-                    ? const Color(0xFF8B5CF6).withOpacity(0.3)
-                    : Colors.orange.withOpacity(0.3),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: avatarUrl != null && avatarUrl.isNotEmpty
-                        ? null
-                        : LinearGradient(
-                            colors: isGroup 
-                                ? [const Color(0xFF8B5CF6), const Color(0xFF06B6D4)]
-                                : [Colors.orange, Colors.red],
-                          ),
-                  ),
-                  child: ClipOval(
-                    child: avatarUrl != null && avatarUrl.isNotEmpty
-                        ? Image.network(avatarUrl, width: 56, height: 56, fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _buildAvatarFallback(name))
-                        : _buildAvatarFallback(name),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: isGroup 
-                                  ? const Color(0xFF8B5CF6).withOpacity(0.2)
-                                  : Colors.orange.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              isGroup ? 'GROUP' : 'CHANNEL',
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                color: isGroup ? const Color(0xFF8B5CF6) : Colors.orange,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '$memberCount members',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.4),
-                        ),
-                      ),
-                      if (description.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.4),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => isGroup ? _joinGroup(item) : _joinChannel(item),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: isGroup 
-                            ? [const Color(0xFF8B5CF6), const Color(0xFF06B6D4)]
-                            : [Colors.orange, Colors.red],
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      isGroup ? 'Join' : 'Subscribe',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAvatarFallback(String username) {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF8B5CF6),
-            Color(0xFF06B6D4),
-          ],
-        ),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Text(
-          username.isNotEmpty ? username[0].toUpperCase() : '?',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required String tooltip,
-    bool isPrimary = false,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onPressed,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: isPrimary
-                ? const Color(0xFF8B5CF6).withOpacity(0.15)
-                : Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isPrimary
-                  ? const Color(0xFF8B5CF6).withOpacity(0.3)
-                  : Colors.white.withOpacity(0.08),
-            ),
-            boxShadow: isPrimary
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF8B5CF6).withOpacity(0.15),
-                      blurRadius: 8,
-                      spreadRadius: -2,
-                    ),
-                  ]
-                : null,
-          ),
-          child: Icon(
-            icon,
-            size: 18,
-            color: isPrimary
-                ? const Color(0xFF8B5CF6)
-                : Colors.white.withOpacity(0.6),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGlassButton({
-    required VoidCallback onPressed,
-    required String label,
-    required IconData icon,
-  }) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: const Color(0xFF8B5CF6).withOpacity(0.3),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF8B5CF6).withOpacity(0.1),
-              blurRadius: 16,
-              spreadRadius: -4,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: const Color(0xFF8B5CF6),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF8B5CF6),
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
