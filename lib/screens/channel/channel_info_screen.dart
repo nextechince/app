@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../providers/chat_provider.dart';
 import '../../services/invitation_service.dart';
 import '../../utils/verified_badge.dart';
@@ -47,52 +47,45 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
 
   Future<void> _copyLinkToClipboard() async {
     if (_invitationLink == null || _invitationLink!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No invitation link available')),
-      );
+      _toast('No invitation link available');
       return;
     }
     await Clipboard.setData(ClipboardData(text: _invitationLink!));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Link copied to clipboard')),
-      );
-    }
+    _toast('Link copied to clipboard');
   }
 
   Future<void> _copyCodeToClipboard() async {
     if (_invitationCode == null || _invitationCode!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No invitation code available')),
-      );
+      _toast('No invitation code available');
       return;
     }
     await Clipboard.setData(ClipboardData(text: _invitationCode!));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Code copied to clipboard')),
-      );
-    }
+    _toast('Code copied to clipboard');
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
   }
 
   Future<void> _regenerateLink() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Regenerate Link?', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Regenerate Link?'),
         content: const Text(
           'This will invalidate the current invitation link and create a new one. Anyone with the old link will no longer be able to join.',
-          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
             child: const Text('Regenerate'),
           ),
         ],
@@ -104,42 +97,30 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final createdBy = authProvider.user?.uid ?? authProvider.mockUserId ?? 'unknown';
-      final newLink = await InvitationService.regenerateLink(widget.chatId, createdBy);
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final createdBy =
+          authProvider.user?.uid ?? authProvider.mockUserId ?? 'unknown';
+      final newLink =
+          await InvitationService.regenerateLink(widget.chatId, createdBy);
 
       if (newLink != null && mounted) {
         await _loadInvitationLink();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invitation link regenerated'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        _toast('Invitation link regenerated');
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to regenerate link')),
-        );
+        _toast('Failed to regenerate link');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
+      _toast('Error: $e');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _shareInvitationLink() async {
     final preview = await InvitationService.getInvitationPreview(widget.chatId);
     if (preview == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No active invitation link')),
-        );
-      }
+      _toast('No active invitation link');
       return;
     }
 
@@ -147,9 +128,9 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     final memberCount = preview['member_count'] ?? 0;
     final link = preview['link'] ?? '';
 
-    final text = 'Join $chatName on AURA Chat!\n\n'
+    final text = 'Join $chatName on Luma Chat!\n\n'
         'Channel\n'
-        'Members: $memberCount\n\n'
+        'Subscribers: $memberCount\n\n'
         'Tap to join: $link';
 
     await Share.share(text);
@@ -164,187 +145,200 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ADD MEMBERS
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _showAddMembersDialog() async {
+    final theme = Theme.of(context);
     final searchController = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
     List<Map<String, dynamic>> selectedUsers = [];
 
     await showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.8,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(ctx).viewInsets.bottom,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Add Members',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: searchController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: 'Search by username or email...', // FIXED: phone → email
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                    prefixIcon: const Icon(Icons.search, color: Colors.white54),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.05),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                  onChanged: (query) async {
-                    if (query.isEmpty) {
-                      setModalState(() => searchResults = []);
-                      return;
-                    }
-                    final results = await _searchUsers(query);
-                    setModalState(() => searchResults = results);
-                  },
-                ),
-                const SizedBox(height: 16),
-                if (selectedUsers.isNotEmpty) ...[
-                  SizedBox(
-                    height: 80,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: selectedUsers.length,
-                      itemBuilder: (context, index) {
-                        final user = selectedUsers[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Column(
-                            children: [
-                              Stack(
-                                children: [
-                                  _buildMemberAvatar(user['avatar_url'], user['username']),
-                                  Positioned(
-                                    top: 0,
-                                    right: 0,
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        setModalState(() {
-                                          selectedUsers.removeWhere((u) => u['id'] == user['id']);
-                                        });
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: const BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(Icons.close, size: 12, color: Colors.white),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                user['username'] ?? 'Unknown',
-                                style: const TextStyle(fontSize: 11, color: Colors.white70),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: theme.dividerColor,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   const SizedBox(height: 16),
-                ],
-                Expanded(
-                  child: searchResults.isEmpty
-                    ? Center(
-                        child: Text(
-                          searchController.text.isEmpty
-                            ? 'Type to search users'
-                            : 'No users found',
-                          style: TextStyle(color: Colors.white.withOpacity(0.3)),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: searchResults.length,
-                        itemBuilder: (context, index) {
-                          final user = searchResults[index];
-                          final isSelected = selectedUsers.any((u) => u['id'] == user['id']);
-                          return ListTile(
-                            leading: _buildMemberAvatar(user['avatar_url'], user['username']),
-                            title: Text(
-                              user['username'] ?? 'Unknown',
-                              style: const TextStyle(color: Colors.white),
+                  Text(
+                    'Add Subscribers',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: searchController,
+                    style: TextStyle(color: theme.colorScheme.onSurface),
+                    decoration: InputDecoration(
+                      hintText: 'Search by username or email...',
+                      prefixIcon: const Icon(Icons.search),
+                    ),
+                    onChanged: (query) async {
+                      if (query.isEmpty) {
+                        setModalState(() => searchResults = []);
+                        return;
+                      }
+                      final results = await _searchUsers(query);
+                      setModalState(() => searchResults = results);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  if (selectedUsers.isNotEmpty) ...[
+                    SizedBox(
+                      height: 80,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: selectedUsers.length,
+                        itemBuilder: (_, index) {
+                          final user = selectedUsers[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Column(
+                              children: [
+                                Stack(
+                                  children: [
+                                    _buildMemberAvatar(
+                                      theme,
+                                      user['avatar_url'],
+                                      user['username'],
+                                    ),
+                                    Positioned(
+                                      top: 0,
+                                      right: 0,
+                                      child: GestureDetector(
+                                        onTap: () => setModalState(() {
+                                          selectedUsers.removeWhere(
+                                              (u) => u['id'] == user['id']);
+                                        }),
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.all(2),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                theme.colorScheme.error,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: theme
+                                                  .scaffoldBackgroundColor,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: const Icon(Icons.close,
+                                              size: 10,
+                                              color: Colors.white),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  width: 60,
+                                  child: Text(
+                                    user['username'] ?? 'Unknown',
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(fontSize: 11),
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ],
                             ),
-                            subtitle: Text(
-                              user['email'] ?? '', // FIXED: phone → email
-                              style: TextStyle(color: Colors.white.withOpacity(0.4)),
-                            ),
-                            trailing: isSelected
-                              ? const Icon(Icons.check_circle, color: Color(0xFF8B5CF6))
-                              : const Icon(Icons.add_circle_outline, color: Colors.white54),
-                            onTap: () {
-                              setModalState(() {
-                                if (isSelected) {
-                                  selectedUsers.removeWhere((u) => u['id'] == user['id']);
-                                } else {
-                                  selectedUsers.add(user);
-                                }
-                              });
-                            },
                           );
                         },
                       ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: selectedUsers.isEmpty
-                      ? null
-                      : () async {
-                          Navigator.pop(context);
-                          await _addMembers(selectedUsers);
-                        },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF8B5CF6),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
                     ),
-                    child: Text(
-                      'Add ${selectedUsers.length} Member${selectedUsers.length > 1 ? 's' : ''}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
+                    const SizedBox(height: 16),
+                  ],
+                  Expanded(
+                    child: searchResults.isEmpty
+                        ? Center(
+                            child: Text(
+                              searchController.text.isEmpty
+                                  ? 'Type to search users'
+                                  : 'No users found',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface
+                                    .withOpacity(0.4),
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: searchResults.length,
+                            itemBuilder: (_, index) {
+                              final user = searchResults[index];
+                              final isSelected = selectedUsers
+                                  .any((u) => u['id'] == user['id']);
+                              return ListTile(
+                                leading: _buildMemberAvatar(
+                                  theme,
+                                  user['avatar_url'],
+                                  user['username'],
+                                ),
+                                title: Text(user['username'] ?? 'Unknown'),
+                                subtitle: Text(user['email'] ?? ''),
+                                trailing: isSelected
+                                    ? Icon(Icons.check_circle,
+                                        color: theme.colorScheme.primary)
+                                    : Icon(Icons.add_circle_outline,
+                                        color: theme.colorScheme.onSurface
+                                            .withOpacity(0.4)),
+                                onTap: () => setModalState(() {
+                                  if (isSelected) {
+                                    selectedUsers.removeWhere(
+                                        (u) => u['id'] == user['id']);
+                                  } else {
+                                    selectedUsers.add(user);
+                                  }
+                                }),
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: selectedUsers.isEmpty
+                          ? null
+                          : () async {
+                              Navigator.pop(ctx);
+                              await _addMembers(selectedUsers);
+                            },
+                      child: Text(
+                        'Add ${selectedUsers.length} Subscriber${selectedUsers.length > 1 ? 's' : ''}',
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -354,11 +348,12 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
 
   Future<List<Map<String, dynamic>>> _searchUsers(String query) async {
     try {
-      final firestore = FirebaseFirestore.instance;
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final currentUserId = authProvider.user?.uid ?? authProvider.mockUserId;
+      final authProvider =
+          Provider.of<LumaAuthProvider>(context, listen: false);
+      final currentUserId =
+          authProvider.user?.uid ?? authProvider.mockUserId;
 
-      final snapshot = await firestore
+      final snapshot = await FirebaseFirestore.instance
           .collection('users')
           .where('username', isGreaterThanOrEqualTo: query)
           .where('username', isLessThanOrEqualTo: '$query\uf8ff')
@@ -386,7 +381,8 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
       for (final user in users) {
         final userId = user['id'] as String;
         final userDoc = await firestore.collection('users').doc(userId).get();
-        final privacy = userDoc.data()?['privacy_settings'] as Map<String, dynamic>?;
+        final privacy =
+            userDoc.data()?['privacy_settings'] as Map<String, dynamic>?;
         final allowAddToGroup = privacy?['allow_add_to_group'] ?? true;
 
         if (!allowAddToGroup) {
@@ -396,13 +392,17 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
           await chatRef.update({
             'participants': FieldValue.arrayUnion([userId]),
             'participants_data.$userId': {
-              'role': 'member',
+              'role': 'subscriber',
               'joined_at': FieldValue.serverTimestamp(),
             },
             'member_count': FieldValue.increment(1),
           });
 
-          await firestore.collection('users').doc(userId).collection('notifications').add({
+          await firestore
+              .collection('users')
+              .doc(userId)
+              .collection('notifications')
+              .add({
             'type': 'added_to_channel',
             'chat_id': widget.chatId,
             'chat_name': widget.chatName,
@@ -412,152 +412,202 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
         }
       }
 
-      if (mounted) {
-        if (addedUsers.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Added ${addedUsers.length} member(s)'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-
-        if (blockedUsers.isNotEmpty) {
-          _showBlockedUsersDialog(blockedUsers);
-        }
+      if (!mounted) return;
+      if (addedUsers.isNotEmpty) {
+        _toast('Added ${addedUsers.length} subscriber(s)');
+      }
+      if (blockedUsers.isNotEmpty) {
+        _showBlockedUsersDialog(blockedUsers);
       }
     } catch (e) {
       debugPrint('Add members error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add members: $e')),
-        );
-      }
+      _toast('Failed to add members: $e');
     }
   }
 
   void _showBlockedUsersDialog(List<Map<String, dynamic>> blockedUsers) {
+    final theme = Theme.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Cannot Add Users', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cannot Add Users'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'These users have disabled being added to groups/channels:',
-              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 12),
             ...blockedUsers.map((user) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  _buildMemberAvatar(user['avatar_url'], user['username']),
-                  const SizedBox(width: 8),
-                  Text(
-                    user['username'] ?? 'Unknown',
-                    style: const TextStyle(color: Colors.white),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      _buildMemberAvatar(
+                          theme, user['avatar_url'], user['username']),
+                      const SizedBox(width: 8),
+                      Text(user['username'] ?? 'Unknown'),
+                    ],
                   ),
-                ],
-              ),
-            )),
+                )),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Send them the invitation link instead.',
-              style: TextStyle(color: Colors.orange, fontSize: 13),
+              style: TextStyle(
+                color: theme.colorScheme.primary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton.icon(
+          TextButton.icon(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               _shareInvitationLink();
             },
             icon: const Icon(Icons.share, size: 16),
             label: const Text('Send Link'),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _showMemberOptions(String memberId, String memberName, String memberRole, bool isMe, bool canManage) async {
+  // ═══════════════════════════════════════════════════════════════════════
+  // MEMBER OPTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _showMemberOptions(
+    String memberId,
+    String memberName,
+    String memberRole,
+    bool isMe,
+    bool canManage,
+  ) async {
     if (isMe) return;
     if (!canManage) return;
 
+    final theme = Theme.of(context);
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
     final myRole = await _getMyRole();
     if (myRole == null) return;
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 16),
-            Text(memberName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            if (myRole == 'owner' && memberRole == 'member')
-              ListTile(
-                leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.2), shape: BoxShape.circle), child: const Icon(Icons.admin_panel_settings, color: Color(0xFF8B5CF6))),
-                title: const Text('Promote to Admin', style: TextStyle(color: Colors.white)),
-                onTap: () { Navigator.pop(context); chatProvider.promoteToAdmin(widget.chatId, memberId); },
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ListTile(
-              leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.orange.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(Icons.remove_circle, color: Colors.orange)),
-              title: const Text('Kick', style: TextStyle(color: Colors.white)),
-              onTap: () { Navigator.pop(context); _confirmKick(memberId, memberName); },
-            ),
-            ListTile(
-              leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(Icons.block, color: Colors.red)),
-              title: const Text('Ban', style: TextStyle(color: Colors.red)),
-              onTap: () { Navigator.pop(context); _confirmBan(memberId, memberName); },
-            ),
-          ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    memberName,
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              if (myRole == 'owner' && memberRole == 'subscriber')
+                ListTile(
+                  leading: Icon(Icons.admin_panel_settings,
+                      color: theme.colorScheme.primary),
+                  title: const Text('Promote to Admin'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    chatProvider.promoteToAdmin(widget.chatId, memberId);
+                  },
+                ),
+              ListTile(
+                leading: const Icon(Icons.remove_circle_outline,
+                    color: Color(0xFFE0954A)),
+                title: const Text('Remove',
+                    style: TextStyle(color: Color(0xFFE0954A))),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmKick(memberId, memberName);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.block, color: theme.colorScheme.error),
+                title: Text('Ban',
+                    style: TextStyle(color: theme.colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmBan(memberId, memberName);
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Future<String?> _getMyRole() async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
     if (userId == null) return null;
 
-    final doc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('chats')
+        .doc(widget.chatId)
+        .get();
     if (!doc.exists) return null;
 
     final data = doc.data()!;
-    return (data['participants_data']?[userId]?['role'] ?? 'member') as String;
+    return (data['participants_data']?[userId]?['role'] ?? 'subscriber')
+        as String;
   }
 
   void _confirmKick(String memberId, String memberName) {
+    final theme = Theme.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: Text('Kick $memberName?', style: const TextStyle(color: Colors.white)),
-        content: const Text('They will be removed from this channel.', style: TextStyle(color: Colors.white70)),
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove $memberName?'),
+        content: const Text('They will be removed from this channel.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5)))),
-          ElevatedButton(
-            onPressed: () { Navigator.pop(context); Provider.of<ChatProvider>(context, listen: false).kickMember(widget.chatId, memberId); },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            child: const Text('Kick'),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Provider.of<ChatProvider>(context, listen: false)
+                  .kickMember(widget.chatId, memberId);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('Remove'),
           ),
         ],
       ),
@@ -565,17 +615,26 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
   }
 
   void _confirmBan(String memberId, String memberName) {
+    final theme = Theme.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: Text('Ban $memberName?', style: const TextStyle(color: Colors.white)),
-        content: const Text('They will be removed and banned from rejoining.', style: TextStyle(color: Colors.white70)),
+      builder: (ctx) => AlertDialog(
+        title: Text('Ban $memberName?'),
+        content:
+            const Text('They will be removed and banned from rejoining.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5)))),
-          ElevatedButton(
-            onPressed: () { Navigator.pop(context); Provider.of<ChatProvider>(context, listen: false).banMember(widget.chatId, memberId); },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Provider.of<ChatProvider>(context, listen: false)
+                  .banMember(widget.chatId, memberId);
+            },
+            style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error),
             child: const Text('Ban'),
           ),
         ],
@@ -584,53 +643,60 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
   }
 
   void _showSettings(String currentRole) {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => ChannelSettingsSheet(chatId: widget.chatId, currentRole: currentRole),
+      builder: (ctx) => ChannelSettingsSheet(
+        chatId: widget.chatId,
+        currentRole: currentRole,
+      ),
     );
   }
 
   Future<void> _leaveChannel() async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final theme = Theme.of(context);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
-    
-    final chatDoc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chats')
+        .doc(widget.chatId)
+        .get();
     if (!chatDoc.exists) return;
-    
+
     final data = chatDoc.data()!;
-    final myRole = (data['participants_data']?[userId]?['role'] ?? 'member') as String;
-    
+    final myRole =
+        (data['participants_data']?[userId]?['role'] ?? 'subscriber')
+            as String;
+
     if (myRole == 'owner') {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Owner cannot leave. Delete the channel instead.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+      _toast('Owner cannot leave. Delete the channel instead.');
       return;
     }
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Leave Channel?', style: TextStyle(color: Colors.white)),
-        content: const Text('You will no longer receive messages from this channel.', style: TextStyle(color: Colors.white70)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave Channel?'),
+        content: const Text(
+            'You will no longer receive messages from this channel.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error),
             child: const Text('Leave'),
           ),
         ],
@@ -638,50 +704,50 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     );
 
     if (confirmed == true) {
-      await Provider.of<ChatProvider>(context, listen: false).leaveChat(widget.chatId);
+      await Provider.of<ChatProvider>(context, listen: false)
+          .leaveChat(widget.chatId);
       if (mounted) Navigator.pop(context);
     }
   }
 
   Future<void> _deleteChannel() async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
+    final theme = Theme.of(context);
+    final authProvider =
+        Provider.of<LumaAuthProvider>(context, listen: false);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
-    
-    final chatDoc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chats')
+        .doc(widget.chatId)
+        .get();
     if (!chatDoc.exists) return;
-    
+
     final data = chatDoc.data()!;
-    final myRole = (data['participants_data']?[userId]?['role'] ?? 'member') as String;
-    
+    final myRole =
+        (data['participants_data']?[userId]?['role'] ?? 'subscriber')
+            as String;
+
     if (myRole != 'owner') {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Only the owner can delete this channel'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _toast('Only the owner can delete this channel');
       return;
     }
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a103c),
-        title: const Text('Delete Channel?', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Channel?'),
         content: const Text(
           'This will permanently delete the channel and all its messages. This action cannot be undone.',
-          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error),
             child: const Text('Delete'),
           ),
         ],
@@ -694,53 +760,49 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
 
     try {
       final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-      final success = await chatProvider.permanentlyDeleteChat(widget.chatId);
+      final success =
+          await chatProvider.permanentlyDeleteChat(widget.chatId);
 
       if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Channel deleted'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        _toast('Channel deleted');
         Navigator.pop(context);
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(chatProvider.error ?? 'Failed to delete channel'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _toast(chatProvider.error ?? 'Failed to delete channel');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _toast('Error: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuraAuthProvider>(context);
+    final theme = Theme.of(context);
+    final authProvider = Provider.of<LumaAuthProvider>(context);
     final userId = authProvider.user?.uid ?? authProvider.mockUserId;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Channel Info'),
-        backgroundColor: const Color(0xFF0A0A0F),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
         actions: [
           StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance.collection('chats').doc(widget.chatId).snapshots(),
+            stream: FirebaseFirestore.instance
+                .collection('chats')
+                .doc(widget.chatId)
+                .snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const SizedBox.shrink();
               final data = snapshot.data!.data() as Map<String, dynamic>?;
-              final myRole = (data?['participants_data']?[userId]?['role'] ?? 'member') as String;
+              final myRole =
+                  (data?['participants_data']?[userId]?['role'] ??
+                          'subscriber') as String;
               final canManage = myRole == 'owner' || myRole == 'admin';
               final isOwner = myRole == 'owner';
 
@@ -748,26 +810,26 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                 children: [
                   if (isOwner || myRole == 'admin') ...[
                     IconButton(
-                      icon: const Icon(Icons.videocam, color: Colors.white70),
+                      icon: const Icon(Icons.videocam_outlined),
                       onPressed: () => _startCall(video: true),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.call, color: Colors.white70),
+                      icon: const Icon(Icons.call_outlined),
                       onPressed: () => _startCall(video: false),
                     ),
                   ],
                   if (canManage)
                     IconButton(
-                      icon: const Icon(Icons.person_add, color: Colors.white70),
+                      icon: const Icon(Icons.person_add_outlined),
                       onPressed: () => _showAddMembersDialog(),
                     ),
                   IconButton(
-                    icon: const Icon(Icons.share, color: Colors.white70),
+                    icon: const Icon(Icons.share_outlined),
                     onPressed: _shareInvitationLink,
                   ),
                   if (canManage)
                     IconButton(
-                      icon: const Icon(Icons.settings, color: Colors.white70),
+                      icon: const Icon(Icons.settings_outlined),
                       onPressed: () => _showSettings(myRole),
                     ),
                 ],
@@ -777,16 +839,26 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance.collection('chats').doc(widget.chatId).snapshots(),
+        stream: FirebaseFirestore.instance
+            .collection('chats')
+            .doc(widget.chatId)
+            .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
+          if (!snapshot.hasData) {
+            return Center(
+              child: CircularProgressIndicator(
+                  color: theme.colorScheme.primary),
+            );
+          }
 
           final data = snapshot.data!.data() as Map<String, dynamic>;
-          final participants = List<String>.from(data['participants'] ?? []);
+          final participants =
+              List<String>.from(data['participants'] ?? []);
           final memberCount = data['member_count'] ?? participants.length;
           final description = data['description'] ?? '';
-          final createdByEmail = data['created_by_email'] as String?; // FIXED: phone → email
-          final myRole = (data['participants_data']?[userId]?['role'] ?? 'member') as String;
+          final createdByEmail = data['created_by_email'] as String?;
+          final myRole = (data['participants_data']?[userId]?['role'] ??
+              'subscriber') as String;
           final canManage = myRole == 'owner' || myRole == 'admin';
           final isOwner = myRole == 'owner';
 
@@ -795,69 +867,118 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ── Channel header ──
                 Center(
                   child: Column(
                     children: [
-                      _buildAvatar(data['avatar_url']),
+                      _buildAvatar(theme, data['avatar_url']),
                       const SizedBox(height: 12),
                       VerifiedUsername(
                         username: data['name'] ?? 'Unknown',
-                        email: createdByEmail, // FIXED: phoneNumber → email
-                        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                        email: createdByEmail,
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                         badgeSize: 16,
                         spacing: 6,
                       ),
                       if (description.isNotEmpty) ...[
                         const SizedBox(height: 4),
-                        Text(description, textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14)),
+                        Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 24),
+                          child: Text(
+                            description,
+                            textAlign: TextAlign.center,
+                            style:
+                                theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.6),
+                            ),
+                          ),
+                        ),
                       ],
                       const SizedBox(height: 4),
-                      Text('$memberCount members \u2022 Channel', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 13)),
+                      Text(
+                        '$memberCount subscriber${memberCount == 1 ? '' : 's'} • Channel',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.5),
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 24),
 
-                // Actions
+                // ── Actions ──
                 Row(
                   children: [
-                    Expanded(child: _buildActionButton(icon: Icons.share, label: 'Invite', onTap: _shareInvitationLink)),
+                    Expanded(
+                      child: _buildActionButton(
+                        theme,
+                        icon: Icons.share_outlined,
+                        label: 'Invite',
+                        onTap: _shareInvitationLink,
+                      ),
+                    ),
                     const SizedBox(width: 12),
                     if (!isOwner) ...[
-                      Expanded(child: _buildActionButton(icon: Icons.exit_to_app, label: 'Leave', color: Colors.red, onTap: _leaveChannel)),
+                      Expanded(
+                        child: _buildActionButton(
+                          theme,
+                          icon: Icons.exit_to_app,
+                          label: 'Leave',
+                          color: theme.colorScheme.error,
+                          onTap: _leaveChannel,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                     ],
                     if (isOwner) ...[
-                      Expanded(child: _buildActionButton(icon: Icons.delete_forever, label: 'Delete', color: Colors.red.shade700, onTap: _deleteChannel)),
+                      Expanded(
+                        child: _buildActionButton(
+                          theme,
+                          icon: Icons.delete_forever_outlined,
+                          label: 'Delete',
+                          color: theme.colorScheme.error,
+                          onTap: _deleteChannel,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                     ],
                   ],
                 ),
                 const SizedBox(height: 24),
 
-                // INVITATION LINK SECTION
-                if (_invitationLink != null && _invitationLink!.isNotEmpty) ...[
+                // ── Invitation link ──
+                if (_invitationLink != null &&
+                    _invitationLink!.isNotEmpty) ...[
                   Container(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF8B5CF6).withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.2)),
+                      color: theme.colorScheme.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: theme.colorScheme.primary.withOpacity(0.2),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.link, color: Color(0xFF8B5CF6), size: 18),
+                            Icon(Icons.link,
+                                color: theme.colorScheme.primary, size: 18),
                             const SizedBox(width: 8),
                             Text(
                               'Invitation Link',
                               style: TextStyle(
-                                color: const Color(0xFF8B5CF6).withOpacity(0.9),
+                                color: theme.colorScheme.primary,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                letterSpacing: 0.5,
                               ),
                             ),
                             const Spacer(),
@@ -865,60 +986,78 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                               GestureDetector(
                                 onTap: _isLoading ? null : _regenerateLink,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: Colors.orange.withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                                    color: const Color(0xFFE0954A)
+                                        .withOpacity(0.12),
+                                    borderRadius:
+                                        BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: const Color(0xFFE0954A)
+                                          .withOpacity(0.3),
+                                    ),
                                   ),
                                   child: _isLoading
-                                    ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange),
-                                      )
-                                    : const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.refresh, color: Colors.orange, size: 12),
-                                          SizedBox(width: 4),
-                                          Text(
-                                            'Regenerate',
-                                            style: TextStyle(
-                                              color: Colors.orange,
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w500,
-                                            ),
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child:
+                                              CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Color(0xFFE0954A),
                                           ),
-                                        ],
-                                      ),
+                                        )
+                                      : const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.refresh,
+                                                color: Color(0xFFE0954A),
+                                                size: 12),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              'Regenerate',
+                                              style: TextStyle(
+                                                color: Color(0xFFE0954A),
+                                                fontSize: 11,
+                                                fontWeight:
+                                                    FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                 ),
                               ),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        if (_invitationCode != null && _invitationCode!.isNotEmpty) ...[
+                        if (_invitationCode != null &&
+                            _invitationCode!.isNotEmpty) ...[
                           GestureDetector(
                             onTap: _copyCodeToClipboard,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 10),
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                color: theme.colorScheme.onSurface
+                                    .withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
                                 children: [
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF8B5CF6).withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(6),
+                                      color: theme.colorScheme.primary
+                                          .withOpacity(0.15),
+                                      borderRadius:
+                                          BorderRadius.circular(6),
                                     ),
-                                    child: const Text(
+                                    child: Text(
                                       'CODE',
                                       style: TextStyle(
-                                        color: Color(0xFF8B5CF6),
+                                        color: theme.colorScheme.primary,
                                         fontSize: 9,
                                         fontWeight: FontWeight.w700,
                                         letterSpacing: 1,
@@ -930,16 +1069,18 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                                     child: Text(
                                       _invitationCode!,
                                       style: TextStyle(
-                                        color: Colors.white.withOpacity(0.9),
+                                        color: theme
+                                            .colorScheme.onSurface,
                                         fontSize: 15,
                                         fontWeight: FontWeight.w600,
-                                        fontFamily: 'monospace',
-                                        fontFamilyFallback: const ['Courier'],
                                         letterSpacing: 1,
                                       ),
                                     ),
                                   ),
-                                  const Icon(Icons.copy, color: Colors.white38, size: 16),
+                                  Icon(Icons.copy,
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.4),
+                                      size: 16),
                                 ],
                               ),
                             ),
@@ -947,11 +1088,12 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                           const SizedBox(height: 8),
                         ],
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white.withOpacity(0.06)),
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Row(
                             children: [
@@ -959,10 +1101,10 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                                 child: Text(
                                   _invitationLink!,
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.8),
+                                    color: theme
+                                        .colorScheme.onSurface
+                                        .withOpacity(0.85),
                                     fontSize: 13,
-                                    fontFamily: 'monospace',
-                                    fontFamilyFallback: const ['Courier'],
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -974,10 +1116,14 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF8B5CF6).withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(8),
+                                    color: theme.colorScheme.primary
+                                        .withOpacity(0.15),
+                                    borderRadius:
+                                        BorderRadius.circular(8),
                                   ),
-                                  child: const Icon(Icons.copy, color: Color(0xFF8B5CF6), size: 18),
+                                  child: Icon(Icons.copy,
+                                      color: theme.colorScheme.primary,
+                                      size: 18),
                                 ),
                               ),
                             ],
@@ -987,52 +1133,30 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                         Row(
                           children: [
                             Expanded(
-                              child: GestureDetector(
-                                onTap: _shareInvitationLink,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                                    ),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: const Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.share, color: Colors.white, size: 16),
-                                      SizedBox(width: 6),
-                                      Text(
-                                        'Share Link',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                              child: SizedBox(
+                                height: 42,
+                                child: ElevatedButton.icon(
+                                  onPressed: _shareInvitationLink,
+                                  icon: const Icon(Icons.share, size: 16),
+                                  label: const Text('Share Link'),
                                 ),
                               ),
                             ),
                             const SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: _copyLinkToClipboard,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.05),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.white.withOpacity(0.1)),
-                                ),
-                                child: const Text(
-                                  'Copy',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
+                            SizedBox(
+                              height: 42,
+                              child: OutlinedButton(
+                                onPressed: _copyLinkToClipboard,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor:
+                                      theme.colorScheme.onSurface,
+                                  side: BorderSide(color: theme.dividerColor),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(10),
                                   ),
                                 ),
+                                child: const Text('Copy'),
                               ),
                             ),
                           ],
@@ -1043,83 +1167,208 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                   const SizedBox(height: 24),
                 ],
 
+                // ── Info block ──
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                    color: theme.colorScheme.onSurface.withOpacity(0.03),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     children: [
-                      _buildInfoRow(icon: Icons.campaign, label: 'Channel Type', value: 'Broadcast'),
-                      _buildInfoRow(icon: Icons.admin_panel_settings, label: 'Messaging', value: 'Admin-only'),
-                      _buildInfoRow(icon: Icons.visibility, label: 'Members can', value: 'View only'),
+                      _buildInfoRow(
+                        theme,
+                        icon: Icons.campaign_outlined,
+                        label: 'Channel Type',
+                        value: 'Broadcast',
+                      ),
+                      _buildInfoRow(
+                        theme,
+                        icon: Icons.admin_panel_settings_outlined,
+                        label: 'Messaging',
+                        value: 'Admin-only',
+                      ),
+                      _buildInfoRow(
+                        theme,
+                        icon: Icons.visibility_outlined,
+                        label: 'Subscribers can',
+                        value: 'View only',
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 24),
 
+                // ── Settings preview (admins only) ──
                 if (canManage) ...[
-                  Text('Settings', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: const Color(0xFF8B5CF6).withOpacity(0.8), letterSpacing: 1)),
-                  const SizedBox(height: 12),
-                  _buildSettingsPreview(data),
+                  _sectionTitle(theme, 'SETTINGS'),
+                  const SizedBox(height: 8),
+                  _buildSettingsPreview(theme, data),
                   const SizedBox(height: 24),
                 ],
 
-                Text('Members ($memberCount)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: const Color(0xFF8B5CF6).withOpacity(0.8), letterSpacing: 1)),
-                const SizedBox(height: 12),
-
-                FutureBuilder<List<Map<String, dynamic>>>(
-                  future: Future.wait(participants.map((uid) async {
-                    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-                    final userData = doc.data() ?? {};
-                    final role = (data['participants_data']?[uid]?['role'] ?? 'member') as String;
-                    return {'uid': uid, ...userData, 'role': role};
-                  })),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator(color: Color(0xFF8B5CF6))));
-
-                    final users = snapshot.data!;
-                    users.sort((a, b) {
-                      final roleOrder = {'owner': 0, 'admin': 1, 'member': 2};
-                      return (roleOrder[a['role']] ?? 3).compareTo(roleOrder[b['role']] ?? 3);
-                    });
-
-                    return Column(
-                      children: users.map((user) {
-                        final uid = user['uid'] as String;
-                        final isMe = uid == userId;
-                        final role = user['role'] as String;
-
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: _buildMemberAvatar(user['avatar_url'], user['username']),
-                          title: Row(
-                            children: [
-                              Flexible(child: Text(user['username'] ?? 'Unknown', style: const TextStyle(color: Colors.white), overflow: TextOverflow.ellipsis)),
-                              if (isMe) Padding(padding: const EdgeInsets.only(left: 8), child: Text('(You)', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12))),
-                            ],
+                // ── Members section ──
+                if (canManage) ...[
+                  // Admins see the full member list
+                  _sectionTitle(theme, 'SUBSCRIBERS ($memberCount)'),
+                  const SizedBox(height: 8),
+                  FutureBuilder<List<Map<String, dynamic>>>(
+                    future: Future.wait(participants.map((uid) async {
+                      final doc = await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(uid)
+                          .get();
+                      final userData = doc.data() ?? {};
+                      final role = (data['participants_data']?[uid]?['role'] ??
+                          'subscriber') as String;
+                      return {'uid': uid, ...userData, 'role': role};
+                    })),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                                color: theme.colorScheme.primary),
                           ),
-                          subtitle: Text(
-                            role == 'owner' ? 'Owner' : role == 'admin' ? 'Admin' : 'Subscriber',
-                            style: TextStyle(color: role == 'owner' ? Colors.amber : role == 'admin' ? const Color(0xFF8B5CF6) : Colors.white54, fontSize: 12),
-                          ),
-                          trailing: !isMe && canManage && role != 'owner'
-                            ? IconButton(icon: const Icon(Icons.more_vert, color: Colors.white54), onPressed: () => _showMemberOptions(uid, user['username'] ?? 'Unknown', role, isMe, canManage))
-                            : null,
-                          onTap: () {
-                            if (!isMe) {
-                              Navigator.pushNamed(context, '/public_profile', arguments: {
-                                'userId': uid, 'username': user['username'], 'avatarUrl': user['avatar_url'], 'bio': user['bio'],
-                              });
-                            }
-                          },
                         );
-                      }).toList(),
-                    );
-                  },
-                ),
+                      }
+
+                      final users = snapshot.data!;
+                      users.sort((a, b) {
+                        final roleOrder = {
+                          'owner': 0,
+                          'admin': 1,
+                          'subscriber': 2,
+                          'member': 2,
+                        };
+                        return (roleOrder[a['role']] ?? 3)
+                            .compareTo(roleOrder[b['role']] ?? 3);
+                      });
+
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.onSurface
+                              .withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          children: users.map((user) {
+                            final uid = user['uid'] as String;
+                            final isMe = uid == userId;
+                            final role = user['role'] as String;
+
+                            return ListTile(
+                              leading: _buildMemberAvatar(
+                                theme,
+                                user['avatar_url'],
+                                user['username'],
+                              ),
+                              title: Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      user['username'] ?? 'Unknown',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w500),
+                                    ),
+                                  ),
+                                  if (isMe)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(left: 6),
+                                      child: Text(
+                                        '(You)',
+                                        style: TextStyle(
+                                          color: theme
+                                              .colorScheme.onSurface
+                                              .withOpacity(0.5),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              subtitle: Text(
+                                role == 'owner'
+                                    ? 'Owner'
+                                    : role == 'admin'
+                                        ? 'Admin'
+                                        : 'Subscriber',
+                                style: TextStyle(
+                                  color: role == 'owner'
+                                      ? const Color(0xFFD4A73A)
+                                      : role == 'admin'
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurface
+                                              .withOpacity(0.5),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              trailing: !isMe &&
+                                      canManage &&
+                                      role != 'owner'
+                                  ? IconButton(
+                                      icon: Icon(Icons.more_vert,
+                                          color: theme
+                                              .colorScheme.onSurface
+                                              .withOpacity(0.5)),
+                                      onPressed: () => _showMemberOptions(
+                                        uid,
+                                        user['username'] ?? 'Unknown',
+                                        role,
+                                        isMe,
+                                        canManage,
+                                      ),
+                                    )
+                                  : null,
+                              onTap: () {
+                                if (!isMe) {
+                                  Navigator.pushNamed(
+                                    context,
+                                    '/public_profile',
+                                    arguments: {
+                                      'userId': uid,
+                                      'username': user['username'],
+                                      'avatarUrl': user['avatar_url'],
+                                      'bio': user['bio'],
+                                    },
+                                  );
+                                }
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      );
+                    },
+                  ),
+                ] else ...[
+                  // Non-admins just see a count, no member list
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color:
+                          theme.colorScheme.onSurface.withOpacity(0.03),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.people_outline,
+                          color:
+                              theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          '$memberCount subscriber${memberCount == 1 ? '' : 's'}',
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           );
@@ -1128,98 +1377,209 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     );
   }
 
-  Widget _buildAvatar(String? avatarUrl) {
-    if (avatarUrl != null && avatarUrl.isNotEmpty) {
-      return CircleAvatar(radius: 40, backgroundImage: NetworkImage(avatarUrl), onBackgroundImageError: (_, __) {});
-    }
-    return CircleAvatar(
-      radius: 40,
-      backgroundColor: const Color(0xFF1a103c),
-      child: const Icon(Icons.campaign, size: 40, color: Color(0xFF8B5CF6)),
+  Widget _sectionTitle(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withOpacity(0.55),
+          letterSpacing: 0.6,
+        ),
+      ),
     );
   }
 
-  Widget _buildMemberAvatar(String? avatarUrl, String? username) {
+  Widget _buildAvatar(ThemeData theme, String? avatarUrl) {
     if (avatarUrl != null && avatarUrl.isNotEmpty) {
-      return CircleAvatar(radius: 20, backgroundImage: NetworkImage(avatarUrl), onBackgroundImageError: (_, __) {});
+      return CircleAvatar(
+        radius: 44,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+        backgroundImage: NetworkImage(avatarUrl),
+        onBackgroundImageError: (_, __) {},
+      );
+    }
+    return CircleAvatar(
+      radius: 44,
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+      child: Icon(Icons.campaign,
+          size: 44, color: theme.colorScheme.primary),
+    );
+  }
+
+  Widget _buildMemberAvatar(
+    ThemeData theme,
+    String? avatarUrl,
+    String? username,
+  ) {
+    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+        backgroundImage: NetworkImage(avatarUrl),
+        onBackgroundImageError: (_, __) {},
+      );
     }
     return CircleAvatar(
       radius: 20,
-      backgroundColor: const Color(0xFF1a103c),
-      child: Text((username ?? 'U')[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12)),
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+      child: Text(
+        (username ?? 'U')[0].toUpperCase(),
+        style: TextStyle(
+          color: theme.colorScheme.primary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 
-  Widget _buildActionButton({required IconData icon, required String label, required VoidCallback onTap, Color? color}) {
+  Widget _buildActionButton(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    final c = color ?? theme.colorScheme.primary;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: (color ?? const Color(0xFF8B5CF6)).withOpacity(0.15),
+          color: c.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: (color ?? const Color(0xFF8B5CF6)).withOpacity(0.3)),
+          border: Border.all(color: c.withOpacity(0.25)),
         ),
         child: Column(
           children: [
-            Icon(icon, color: color ?? const Color(0xFF8B5CF6)),
+            Icon(icon, color: c, size: 20),
             const SizedBox(height: 4),
-            Text(label, style: TextStyle(color: color ?? const Color(0xFF8B5CF6), fontSize: 12, fontWeight: FontWeight.w500)),
+            Text(
+              label,
+              style: TextStyle(
+                color: c,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow({required IconData icon, required String label, required String value}) {
+  Widget _buildInfoRow(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Icon(icon, size: 20, color: Colors.white54),
+          Icon(icon,
+              size: 20,
+              color: theme.colorScheme.onSurface.withOpacity(0.5)),
           const SizedBox(width: 12),
-          Expanded(child: Text(label, style: TextStyle(color: Colors.white.withOpacity(0.7)))),
-          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.7)),
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSettingsPreview(Map<String, dynamic> data) {
+  Widget _buildSettingsPreview(ThemeData theme, Map<String, dynamic> data) {
     final settings = data['settings'] as Map<String, dynamic>? ?? {};
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white.withOpacity(0.06))),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.onSurface.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Column(
         children: [
-          _buildSettingRow(icon: Icons.chat_bubble, label: 'Chat Enabled', value: !(settings['chat_disabled'] ?? false)),
-          _buildSettingRow(icon: Icons.attach_file, label: 'File Sharing', value: !(settings['file_sharing_disabled'] ?? false)),
-          _buildSettingRow(icon: Icons.poll, label: 'Polls', value: settings['polls_enabled'] ?? true),
-          _buildSettingRow(icon: Icons.emoji_emotions, label: 'Reactions', value: settings['reactions_enabled'] ?? true),
+          _buildSettingRow(theme,
+              icon: Icons.chat_bubble_outline,
+              label: 'Chat Enabled',
+              value: !(settings['chat_disabled'] ?? false)),
+          _buildSettingRow(theme,
+              icon: Icons.attach_file,
+              label: 'File Sharing',
+              value: !(settings['file_sharing_disabled'] ?? false)),
+          _buildSettingRow(theme,
+              icon: Icons.poll_outlined,
+              label: 'Polls',
+              value: settings['polls_enabled'] ?? true),
+          _buildSettingRow(theme,
+              icon: Icons.emoji_emotions_outlined,
+              label: 'Reactions',
+              value: settings['reactions_enabled'] ?? true),
         ],
       ),
     );
   }
 
-  Widget _buildSettingRow({required IconData icon, required String label, required bool value}) {
+  Widget _buildSettingRow(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    required bool value,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: Colors.white54),
+          Icon(icon,
+              size: 18,
+              color: theme.colorScheme.onSurface.withOpacity(0.5)),
           const SizedBox(width: 12),
-          Expanded(child: Text(label, style: TextStyle(color: Colors.white.withOpacity(0.7)))),
-          Icon(value ? Icons.check_circle : Icons.cancel, size: 18, color: value ? Colors.green : Colors.red),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                  color:
+                      theme.colorScheme.onSurface.withOpacity(0.7)),
+            ),
+          ),
+          Icon(
+            value ? Icons.check_circle : Icons.cancel_outlined,
+            size: 18,
+            color: value
+                ? const Color(0xFF4FAE4F)
+                : theme.colorScheme.error,
+          ),
         ],
       ),
     );
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CHANNEL SETTINGS SHEET
+// ═══════════════════════════════════════════════════════════════════════════
 class ChannelSettingsSheet extends StatefulWidget {
   final String chatId;
   final String currentRole;
-  const ChannelSettingsSheet({super.key, required this.chatId, required this.currentRole});
+
+  const ChannelSettingsSheet({
+    super.key,
+    required this.chatId,
+    required this.currentRole,
+  });
 
   @override
   State<ChannelSettingsSheet> createState() => _ChannelSettingsSheetState();
@@ -1228,63 +1588,136 @@ class ChannelSettingsSheet extends StatefulWidget {
 class _ChannelSettingsSheetState extends State<ChannelSettingsSheet> {
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('chats').doc(widget.chatId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()));
+        if (!snapshot.hasData) {
+          return const SizedBox(
+            height: 200,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
         final settings = data['settings'] as Map<String, dynamic>? ?? {};
         final isOwner = widget.currentRole == 'owner';
 
-        return Container(
-          padding: const EdgeInsets.all(20),
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(2))),
-              const SizedBox(height: 20),
-              const Text('Channel Settings', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView(
-                  children: [
-                    _buildToggle(label: 'Disable Chat', subtitle: 'Only admins can send messages', value: settings['chat_disabled'] ?? false, onChanged: (v) => _updateSetting('chat_disabled', v)),
-                    _buildToggle(label: 'Disable File Sharing', subtitle: 'Prevent members from sending files', value: settings['file_sharing_disabled'] ?? false, onChanged: (v) => _updateSetting('file_sharing_disabled', v)),
-                    _buildToggle(label: 'Enable Polls', value: settings['polls_enabled'] ?? true, onChanged: (v) => _updateSetting('polls_enabled', v)),
-                    _buildToggle(label: 'Enable Reactions', value: settings['reactions_enabled'] ?? true, onChanged: (v) => _updateSetting('reactions_enabled', v)),
-                    _buildToggle(label: 'Allow Forwarding', value: settings['forwarding_enabled'] ?? true, onChanged: (v) => _updateSetting('forwarding_enabled', v)),
-                    if (isOwner)
-                      _buildToggle(label: 'Enable Voice Chat', value: settings['voice_chat_enabled'] ?? false, onChanged: (v) => _updateSetting('voice_chat_enabled', v)),
-                  ],
+        return SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.dividerColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Text(
+                  'Channel Settings',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      _buildToggle(
+                        theme,
+                        label: 'Disable Chat',
+                        subtitle: 'Only admins can send messages',
+                        value: settings['chat_disabled'] ?? false,
+                        onChanged: (v) =>
+                            _updateSetting('chat_disabled', v),
+                      ),
+                      _buildToggle(
+                        theme,
+                        label: 'Disable File Sharing',
+                        subtitle:
+                            'Prevent subscribers from sending files',
+                        value: settings['file_sharing_disabled'] ?? false,
+                        onChanged: (v) =>
+                            _updateSetting('file_sharing_disabled', v),
+                      ),
+                      _buildToggle(
+                        theme,
+                        label: 'Enable Polls',
+                        value: settings['polls_enabled'] ?? true,
+                        onChanged: (v) =>
+                            _updateSetting('polls_enabled', v),
+                      ),
+                      _buildToggle(
+                        theme,
+                        label: 'Enable Reactions',
+                        value: settings['reactions_enabled'] ?? true,
+                        onChanged: (v) =>
+                            _updateSetting('reactions_enabled', v),
+                      ),
+                      _buildToggle(
+                        theme,
+                        label: 'Allow Forwarding',
+                        value: settings['forwarding_enabled'] ?? true,
+                        onChanged: (v) =>
+                            _updateSetting('forwarding_enabled', v),
+                      ),
+                      if (isOwner)
+                        _buildToggle(
+                          theme,
+                          label: 'Enable Voice Chat',
+                          value: settings['voice_chat_enabled'] ?? false,
+                          onChanged: (v) =>
+                              _updateSetting('voice_chat_enabled', v),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _buildToggle({required String label, String? subtitle, required bool value, required ValueChanged<bool>? onChanged}) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: SwitchListTile(
-        title: Text(label, style: const TextStyle(color: Colors.white)),
-        subtitle: subtitle != null ? Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)) : null,
-        value: value,
-        onChanged: onChanged,
-        activeColor: const Color(0xFF8B5CF6),
-      ),
+  Widget _buildToggle(
+    ThemeData theme, {
+    required String label,
+    String? subtitle,
+    required bool value,
+    required ValueChanged<bool>? onChanged,
+  }) {
+    return SwitchListTile(
+      title: Text(label, style: const TextStyle(fontSize: 15)),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+                fontSize: 12,
+              ),
+            )
+          : null,
+      value: value,
+      onChanged: onChanged,
+      activeColor: theme.colorScheme.primary,
     );
   }
 
   Future<void> _updateSetting(String key, bool value) async {
-    await Provider.of<ChatProvider>(context, listen: false).toggleSetting(widget.chatId, key, value);
+    await Provider.of<ChatProvider>(context, listen: false)
+        .toggleSetting(widget.chatId, key, value);
   }
 }
