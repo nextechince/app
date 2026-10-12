@@ -2,9 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../providers/auth_provider.dart' show AuraAuthProvider;
+
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../services/app_localizations.dart';
 import '../../services/cloudinary_service.dart';
 
@@ -15,8 +16,7 @@ class SetupProfileScreen extends StatefulWidget {
   State<SetupProfileScreen> createState() => _SetupProfileScreenState();
 }
 
-class _SetupProfileScreenState extends State<SetupProfileScreen>
-    with SingleTickerProviderStateMixin {
+class _SetupProfileScreenState extends State<SetupProfileScreen> {
   final _nameController = TextEditingController();
   final _usernameController = TextEditingController();
   final _bioController = TextEditingController();
@@ -24,9 +24,6 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
   String? _usernameError;
   File? _profileImage;
   final ImagePicker _picker = ImagePicker();
-
-  late AnimationController _animController;
-  late Animation<double> _fadeAnimation;
 
   String? _existingUsername;
   bool _isExistingUser = false;
@@ -36,21 +33,14 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOut),
-    );
-    _animController.forward();
     _loadExistingProfile();
   }
 
-  /// Load existing profile data for returning users
+  // FIX: read from FirebaseAuth directly, not provider
+  String? get _userId => FirebaseAuth.instance.currentUser?.uid;
+
   Future<void> _loadExistingProfile() async {
-    final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-    final userId = authProvider.user?.uid ?? authProvider.mockUserId;
+    final userId = _userId;
     if (userId == null) return;
 
     try {
@@ -68,8 +58,10 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
 
         setState(() {
           _isExistingUser = true;
-          _hasCompleteProfile = username != null && username.isNotEmpty &&
-                               displayName != null && displayName.isNotEmpty;
+          _hasCompleteProfile = username != null &&
+              username.isNotEmpty &&
+              displayName != null &&
+              displayName.isNotEmpty;
           _existingUsername = username;
           _existingAvatarUrl = avatarUrl;
           _nameController.text = displayName ?? '';
@@ -82,11 +74,8 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
     }
   }
 
-  /// Skip setup and go to main app (for existing users who don't want to change anything)
   void _proceedToApp() {
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/main');
-    }
+    if (mounted) Navigator.pushReplacementNamed(context, '/main');
   }
 
   void _validateUsername(String value) {
@@ -95,11 +84,11 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
       return;
     }
     if (value.length < 3) {
-      setState(() => _usernameError = AppLocalizations.get('username_short'));
+      setState(() => _usernameError = 'Username too short');
       return;
     }
     if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
-      setState(() => _usernameError = AppLocalizations.get('username_invalid'));
+      setState(() => _usernameError = 'Only letters, numbers, _');
       return;
     }
     setState(() => _usernameError = null);
@@ -107,170 +96,132 @@ class _SetupProfileScreenState extends State<SetupProfileScreen>
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final XFile? pickedFile = await _picker.pickImage(
+      final pickedFile = await _picker.pickImage(
         source: source,
         maxWidth: 512,
         maxHeight: 512,
         imageQuality: 85,
       );
-
-      if (pickedFile != null) {
+      if (pickedFile != null && mounted) {
         setState(() => _profileImage = File(pickedFile.path));
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error picking image: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     }
   }
 
   void _showImagePickerOptions() {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1a103c),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF1F1F1F)
+          : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(2),
+      builder: (_) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              AppLocalizations.get('tap_add_photo'),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 20),
-            _buildOptionTile(
-              icon: Icons.camera_alt,
-              label: AppLocalizations.get('camera'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildOptionTile(
-              icon: Icons.photo_library,
-              label: AppLocalizations.get('gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-            if (_profileImage != null) ...[
-              const SizedBox(height: 8),
-              _buildOptionTile(
-                icon: Icons.delete,
-                label: 'Remove Photo',
-                color: Colors.red,
+              ListTile(
+                leading: Icon(Icons.camera_alt_outlined,
+                    color: theme.colorScheme.primary),
+                title: const Text('Take photo'),
                 onTap: () {
                   Navigator.pop(context);
-                  setState(() => _profileImage = null);
+                  _pickImage(ImageSource.camera);
                 },
               ),
+              ListTile(
+                leading: Icon(Icons.photo_library_outlined,
+                    color: theme.colorScheme.primary),
+                title: const Text('Choose from gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              if (_profileImage != null)
+                ListTile(
+                  leading: Icon(Icons.delete_outline,
+                      color: theme.colorScheme.error),
+                  title: Text(
+                    'Remove photo',
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    setState(() => _profileImage = null);
+                  },
+                ),
             ],
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildOptionTile({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    Color color = const Color(0xFF8B5CF6),
-  }) {
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.2),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: color),
-      ),
-      title: Text(
-        label,
-        style: const TextStyle(color: Colors.white),
-      ),
-      onTap: onTap,
-    );
-  }
+  Future<String?> _uploadProfileImage(String userId) async {
+    if (_profileImage == null) return null;
 
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+      final currentAvatarUrl = userDoc.data()?['avatar_url'] as String?;
 
+      if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) {
+        await CloudinaryService.deleteFile(currentAvatarUrl);
+      }
 
-Future<String?> _uploadProfileImage(String userId) async {
-  if (_profileImage == null) return null;
-
-  try {
-    // ── DELETE OLD AVATAR FROM CLOUDINARY ──
-    // Get the current avatar URL from Firestore
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .get();
-    final currentAvatarUrl = userDoc.data()?['avatar_url'] as String?;
-
-    if (currentAvatarUrl != null && currentAvatarUrl.isNotEmpty) {
-      await CloudinaryService.deleteFile(currentAvatarUrl);
-    }
-    // ── END DELETE ──
-
-    // Upload to Cloudinary instead of Firebase Storage
-    final imageUrl = await CloudinaryService.uploadImage(
-      _profileImage!,
-      'aurachat/profiles/$userId'
-    );
-
-    if (imageUrl == null) {
-      throw Exception('Failed to upload image');
-    }
-
-    // Use .set() with merge instead of .update()
-    // This creates the document if it doesn't exist
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .set({
-          'avatar_url': imageUrl,
-          'updated_at': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-
-    return imageUrl;
-  } catch (e) {
-    debugPrint('Error uploading profile image: $e');
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to upload image: $e'),
-          backgroundColor: Colors.red,
-        ),
+      final imageUrl = await CloudinaryService.uploadImage(
+        _profileImage!,
+        'luma/profiles/$userId',
       );
+
+      if (imageUrl == null) throw Exception('Failed to upload image');
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .set({
+        'avatar_url': imageUrl,
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      return imageUrl;
+    } catch (e) {
+      debugPrint('Error uploading profile image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to upload: $e')),
+        );
+      }
+      return null;
     }
-    return null;
   }
-}
 
   Future<bool> _isUsernameTaken(String username) async {
-    // Skip check if user is keeping their own username
-    if (_isExistingUser && _existingUsername != null && _existingUsername == username) {
+    if (_isExistingUser &&
+        _existingUsername != null &&
+        _existingUsername == username) {
       return false;
     }
     try {
@@ -286,22 +237,20 @@ Future<String?> _uploadProfileImage(String userId) async {
     }
   }
 
-  void _completeSetup() async {
+  Future<void> _completeSetup() async {
     if (_nameController.text.trim().isEmpty) {
-      _showError(AppLocalizations.get('please_enter_name'));
+      _showError('Please enter your name');
       return;
     }
     if (_usernameError != null || _usernameController.text.trim().isEmpty) {
-      _showError(AppLocalizations.get('please_enter_username'));
+      _showError('Please enter a username');
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      final authProvider = Provider.of<AuraAuthProvider>(context, listen: false);
-      final userId = authProvider.user?.uid ?? authProvider.mockUserId;
-
+      final userId = _userId;
       if (userId == null) {
         throw Exception('Not authenticated. Please log in again.');
       }
@@ -311,7 +260,7 @@ Future<String?> _uploadProfileImage(String userId) async {
       if (taken) {
         setState(() {
           _isLoading = false;
-          _usernameError = AppLocalizations.get('username_taken');
+          _usernameError = 'Username already taken';
         });
         return;
       }
@@ -320,33 +269,53 @@ Future<String?> _uploadProfileImage(String userId) async {
       if (_profileImage != null) {
         photoUrl = await _uploadProfileImage(userId);
         if (photoUrl == null) {
+          if (!mounted) return;
           setState(() => _isLoading = false);
-          _showError('Profile image upload failed. Please try again.');
+          _showError('Image upload failed. Try again.');
           return;
         }
       }
 
-       final success = await authProvider.setupProfile(
-        username: username,
-        displayName: _nameController.text.trim(),
-        bio: _bioController.text.trim().isNotEmpty ? _bioController.text.trim() : null,
-        photoUrl: photoUrl,
-        email: authProvider.email,
-      );
+      // Save to Firestore
+      final updates = <String, dynamic>{
+        'uid': userId,
+        'username': username,
+        'display_name': _nameController.text.trim(),
+        'bio': _bioController.text.trim(),
+        'updated_at': FieldValue.serverTimestamp(),
+      };
+      if (photoUrl != null) updates['avatar_url'] = photoUrl;
 
-      if (!success) {
-        throw Exception(authProvider.error ?? 'Failed to save profile');
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .set(updates, SetOptions(merge: true));
+
+      // Try to update the provider too, but don't fail if it errors
+      try {
+        final authProvider =
+            Provider.of<LumaAuthProvider>(context, listen: false);
+        await authProvider.setupProfile(
+          username: username,
+          displayName: _nameController.text.trim(),
+          bio: _bioController.text.trim().isNotEmpty
+              ? _bioController.text.trim()
+              : null,
+          photoUrl: photoUrl,
+          email: FirebaseAuth.instance.currentUser?.email,
+        );
+      } catch (e) {
+        debugPrint('Provider update warning (non-fatal): $e');
       }
 
+      if (!mounted) return;
       setState(() => _isLoading = false);
-
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/main');
-      }
+      Navigator.pushReplacementNamed(context, '/main');
     } catch (e, stackTrace) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       debugPrint('COMPLETE SETUP ERROR: $e');
-      debugPrint('STACK TRACE: $stackTrace');
+      debugPrint('STACK: $stackTrace');
       _showError('Error: $e');
     }
   }
@@ -355,9 +324,9 @@ Future<String?> _uploadProfileImage(String userId) async {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: Colors.red.withOpacity(0.9),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
@@ -367,154 +336,74 @@ Future<String?> _uploadProfileImage(String userId) async {
     _nameController.dispose();
     _usernameController.dispose();
     _bioController.dispose();
-    _animController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0A0A0F),
-              Color(0xFF1a103c),
-              Color(0xFF0f172a),
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: FadeTransition(
-            opacity: _fadeAnimation,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+
+              // Header
+              Row(
                 children: [
-                  const SizedBox(height: 20),
+                  Expanded(
+                    child: Text(
+                      _hasCompleteProfile ? 'Your Profile' : 'Set up profile',
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  if (_hasCompleteProfile)
+                    TextButton(
+                      onPressed: _proceedToApp,
+                      style: TextButton.styleFrom(
+                        foregroundColor: theme.colorScheme.primary,
+                        textStyle: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
+                      child: const Text('Proceed'),
+                    ),
+                ],
+              ),
 
-                  // Header with skip button for existing users
-                  Row(
+              const SizedBox(height: 8),
+              Text(
+                _hasCompleteProfile
+                    ? 'Review or update your profile info.'
+                    : 'Add a name and username so people can find you.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  height: 1.4,
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Avatar picker
+              Center(
+                child: GestureDetector(
+                  onTap: _showImagePickerOptions,
+                  child: Stack(
                     children: [
-                      Expanded(
-                        child: ShaderMask(
-                          shaderCallback: (bounds) => const LinearGradient(
-                            colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                          ).createShader(bounds),
-                          child: Text(
-                            _hasCompleteProfile 
-                                ? 'Your Profile'
-                                : AppLocalizations.get('setup_profile'),
-                            style: const TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_hasCompleteProfile) ...[
-                        TextButton(
-                          onPressed: _proceedToApp,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF8B5CF6).withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                              ),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Proceed',
-                                  style: TextStyle(
-                                    color: Color(0xFF8B5CF6),
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                SizedBox(width: 4),
-                                Icon(
-                                  Icons.arrow_forward,
-                                  color: Color(0xFF8B5CF6),
-                                  size: 16,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-
-                  const SizedBox(height: 8),
-                  Text(
-                    _hasCompleteProfile
-                        ? 'Review or update your profile info'
-                        : AppLocalizations.get('setup_description'),
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: Colors.white.withOpacity(0.5),
-                      height: 1.5,
-                    ),
-                  ),
-
-                  // Show banner for existing users
-                  if (_hasCompleteProfile) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF10B981).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFF10B981).withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.check_circle,
-                            color: Color(0xFF10B981),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Your profile is complete! You can proceed to the app or make changes below.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.white.withOpacity(0.7),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 40),
-
-                  // Profile photo
-                  Center(
-                    child: GestureDetector(
-                      onTap: _showImagePickerOptions,
-                      child: Container(
-                        width: 120,
-                        height: 120,
+                      Container(
+                        width: 112,
+                        height: 112,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          gradient: _profileImage == null && _existingAvatarUrl == null
-                              ? const LinearGradient(
-                                  colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                                )
-                              : null,
+                          color:
+                              theme.colorScheme.primary.withOpacity(0.15),
                           image: _profileImage != null
                               ? DecorationImage(
                                   image: FileImage(_profileImage!),
@@ -522,261 +411,214 @@ Future<String?> _uploadProfileImage(String userId) async {
                                 )
                               : _existingAvatarUrl != null
                                   ? DecorationImage(
-                                      image: NetworkImage(_existingAvatarUrl!),
+                                      image: NetworkImage(
+                                          _existingAvatarUrl!),
                                       fit: BoxFit.cover,
                                     )
                                   : null,
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                              blurRadius: 30,
-                              spreadRadius: 5,
-                            ),
-                          ],
                         ),
-                        child: _profileImage == null && _existingAvatarUrl == null
-                            ? const Center(
-                                child: Icon(
-                                  Icons.person,
-                                  size: 50,
-                                  color: Colors.white70,
-                                ),
+                        child: _profileImage == null &&
+                                _existingAvatarUrl == null
+                            ? Icon(
+                                Icons.person,
+                                size: 48,
+                                color: theme.colorScheme.primary,
                               )
                             : null,
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Center(
-                    child: Text(
-                      AppLocalizations.get('tap_add_photo'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withOpacity(0.4),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-                  _buildGlassInput(
-                    label: AppLocalizations.get('display_name'),
-                    hint: AppLocalizations.get('display_name_hint'),
-                    icon: Icons.person_outline,
-                    controller: _nameController,
-                  ),
-                  const SizedBox(height: 16),
-                  _buildGlassInput(
-                    label: AppLocalizations.get('username'),
-                    hint: AppLocalizations.get('username_hint'),
-                    icon: Icons.alternate_email,
-                    controller: _usernameController,
-                    onChanged: _validateUsername,
-                    errorText: _usernameError,
-                    prefix: const Text(
-                      '@',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildGlassInput(
-                    label: AppLocalizations.get('bio'),
-                    hint: AppLocalizations.get('bio_hint'),
-                    icon: Icons.edit_note,
-                    controller: _bioController,
-                    maxLines: 3,
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Verification badge info
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.08),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                            color: theme.colorScheme.primary,
                             shape: BoxShape.circle,
+                            border: Border.all(
+                              color: theme.scaffoldBackgroundColor,
+                              width: 2,
+                            ),
                           ),
                           child: const Icon(
-                            Icons.verified,
-                            color: Color(0xFF8B5CF6),
-                            size: 18,
+                            Icons.camera_alt,
+                            size: 14,
+                            color: Colors.white,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                AppLocalizations.get('verification'),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                AppLocalizations.get('verification_desc'),
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.white.withOpacity(0.4),
-                                  height: 1.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  'Tap to add photo',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                ),
+              ),
 
-                  const SizedBox(height: 32),
+              const SizedBox(height: 32),
 
-                  // Action buttons
-                  if (_hasCompleteProfile) ...[
-                    // Two buttons for existing users
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: _isLoading ? null : _proceedToApp,
-                            child: Container(
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.1),
-                                ),
-                              ),
-                              child: const Center(
-                                child: Text(
-                                  'Proceed to App',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: _isLoading ? null : _completeSetup,
-                            child: Container(
-                              height: 56,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
-                              ),
-                              child: Center(
-                                child: _isLoading
-                                    ? const SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Text(
-                                        'Update Profile',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+              _buildField(
+                theme,
+                label: 'Display name',
+                hint: 'Your name',
+                icon: Icons.person_outline,
+                controller: _nameController,
+              ),
+              const SizedBox(height: 16),
+              _buildField(
+                theme,
+                label: 'Username',
+                hint: 'username',
+                icon: Icons.alternate_email,
+                controller: _usernameController,
+                onChanged: _validateUsername,
+                errorText: _usernameError,
+                prefix: const Text(
+                  '@',
+                  style: TextStyle(color: Color(0xFF999999), fontSize: 16),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _buildField(
+                theme,
+                label: 'Bio (optional)',
+                hint: 'Tell people about you',
+                icon: Icons.edit_note,
+                controller: _bioController,
+                maxLines: 3,
+              ),
+
+              const SizedBox(height: 24),
+
+              // Verification info box
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: theme.colorScheme.primary.withOpacity(0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.verified_outlined,
+                        color: theme.colorScheme.primary,
+                        size: 18,
+                      ),
                     ),
-                  ] else ...[
-                    // Single button for new users
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF8B5CF6), Color(0xFF06B6D4)],
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Verification',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
                             ),
-                          ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Verified badges are available for public figures, brands and businesses.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.6),
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Buttons
+              if (_hasCompleteProfile) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 52,
+                        child: OutlinedButton(
+                          onPressed: _isLoading ? null : _proceedToApp,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: theme.colorScheme.onSurface,
+                            side: BorderSide(color: theme.dividerColor),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text('Proceed'),
                         ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: SizedBox(
+                        height: 52,
                         child: ElevatedButton(
                           onPressed: _isLoading ? null : _completeSetup,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
                           child: _isLoading
                               ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
+                                  width: 22,
+                                  height: 22,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
                                     color: Colors.white,
                                   ),
                                 )
-                              : Text(
-                                  AppLocalizations.get('complete_setup'),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                              : const Text('Update'),
                         ),
                       ),
                     ),
                   ],
-                ],
-              ),
-            ),
+                ),
+              ] else ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _completeSetup,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Complete Setup'),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 16),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildGlassInput({
+  Widget _buildField(
+    ThemeData theme, {
     required String label,
     required String hint,
     required IconData icon,
@@ -791,44 +633,25 @@ Future<String?> _uploadProfileImage(String userId) async {
       children: [
         Text(
           label,
-          style: TextStyle(
-            fontSize: 14,
+          style: theme.textTheme.bodySmall?.copyWith(
             fontWeight: FontWeight.w500,
-            color: Colors.white.withOpacity(0.7),
+            color: theme.colorScheme.onSurface.withOpacity(0.7),
           ),
         ),
         const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: errorText != null
-                  ? Colors.red.withOpacity(0.5)
-                  : Colors.white.withOpacity(0.08),
-            ),
+        TextField(
+          controller: controller,
+          maxLines: maxLines,
+          onChanged: onChanged,
+          style: TextStyle(
+            color: theme.colorScheme.onSurface,
+            fontSize: 16,
           ),
-          child: TextField(
-            controller: controller,
-            maxLines: maxLines,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-            ),
-            onChanged: onChanged,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.25),
-              ),
-              prefixIcon: prefix ?? Icon(icon, color: Colors.white.withOpacity(0.3)),
-              errorText: errorText,
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 18,
-              ),
-            ),
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon:
+                prefix ?? Icon(icon, color: theme.colorScheme.primary),
+            errorText: errorText,
           ),
         ),
       ],
