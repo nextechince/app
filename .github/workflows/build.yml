@@ -1,16 +1,20 @@
-name: Generate Keystore (Run once)
-
-on:
-  workflow_dispatch:
+name: Build LUMA CHAT
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
-  generate:
+  build-android:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -19,34 +23,339 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Generate release keystore
-        run: |
-          mkdir -p android/app
-          
-          keytool -genkeypair -v \
-            -keystore android/app/luma-release.jks \
-            -alias luma \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass luma12345 \
-            -keypass luma12345 \
-            -dname "CN=Luma Chat, OU=Mobile, O=Luma, L=Doha, ST=Qatar, C=QA"
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
 
-          cat > android/key.properties << 'EOF'
-          storePassword=luma12345
-          keyPassword=luma12345
-          keyAlias=luma
-          storeFile=luma-release.jks
+      - name: Backup keystore before wiping android/
+        run: |
+          mkdir -p /tmp/backup
+          cp android/app/luma-release.jks /tmp/backup/ 2>/dev/null || echo "no keystore found"
+          cp android/key.properties /tmp/backup/ 2>/dev/null || echo "no key.properties found"
+          ls -la /tmp/backup/
+
+      - name: Create Android project
+        run: |
+          cp android/app/google-services.json /tmp/google-services.json
+          rm -rf android
+          flutter create . --platforms=android --org com.lumachat --project-name app
+          mkdir -p android/app
+          cp /tmp/google-services.json android/app/
+          cp /tmp/backup/luma-release.jks android/app/ 2>/dev/null || true
+          cp /tmp/backup/key.properties android/ 2>/dev/null || true
+          ls -la android/app/google-services.json
+          ls -la android/app/luma-release.jks || echo "keystore missing"
+
+      - name: Fix settings.gradle
+        run: |
+          cat > android/settings.gradle << 'EOF'
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }()
+
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "7.4.2" apply false
+              id "org.jetbrains.kotlin.android" version "1.8.22" apply false
+              id "com.google.gms.google-services" version "4.3.15" apply false
+          }
+
+          include ":app"
           EOF
 
-          echo "=== Keystore created ==="
-          ls -la android/app/luma-release.jks
-          echo "=== key.properties ==="
-          cat android/key.properties
-
-      - name: Commit keystore to repo
+      - name: Fix project-level build.gradle
         run: |
-          git config user.name "Luma Chat CI"
-          git config user.email "actions@github.com"
-          git add android/app/luma-release.jks android/key.properties
-          git commit -m "Add release signing keystore"
-          git push
+          cat > android/build.gradle << 'EOF'
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(':app')
+          }
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+
+      - name: Fix Gradle wrapper
+        run: |
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
+          EOF
+
+      - name: Create Cloudinary config
+        run: |
+          cat > lib/services/cloudinary_config.dart << 'EOF'
+          class CloudinaryConfig {
+            static const String cloudName = '${{ secrets.CLOUDINARY_CLOUD_NAME }}';
+            static const String apiKey = '${{ secrets.CLOUDINARY_API_KEY }}';
+            static const String apiSecret = '${{ secrets.CLOUDINARY_API_SECRET }}';
+          }
+          EOF
+
+      - name: Create API config
+        run: |
+          cat > lib/services/api_config.dart << 'EOF'
+          class ApiConfig {
+            static const String geminiApiKey = '${{ secrets.GEMINI_API_KEY }}';
+          }
+          EOF
+
+      - name: Create EmailJS config
+        run: |
+          cat > lib/services/emailjs_config.dart << 'EOF'
+          class EmailJSConfig {
+            static const String serviceId = '${{ secrets.EMAILJS_SERVICE_ID }}';
+            static const String templateId = '${{ secrets.EMAILJS_TEMPLATE_ID }}';
+            static const String publicKey = '${{ secrets.EMAILJS_PUBLIC_KEY }}';
+          }
+          EOF
+
+      - name: Fix app build.gradle for ALL phones
+        run: |
+          python3 << 'PYEOF'
+          import re
+
+          with open('android/app/build.gradle', 'r') as f:
+              content = f.read()
+
+          # Force package name
+          content = re.sub(r'namespace\s+"[^"]*"', 'namespace "com.lumachat.app"', content)
+          content = re.sub(r'applicationId\s+"[^"]*"', 'applicationId "com.lumachat.app"', content)
+
+          # Pin SDKs
+          content = re.sub(r'compileSdk\s*=?\s*flutter\.compileSdkVersion', 'compileSdk = 34', content)
+          content = re.sub(r'compileSdkVersion\s+.*', 'compileSdkVersion 34', content)
+          content = re.sub(r'compileSdk\s*=?\s*\d+', 'compileSdk = 34', content)
+          content = re.sub(r'targetSdk\s*=?\s*flutter\.targetSdkVersion', 'targetSdk = 34', content)
+          content = re.sub(r'targetSdkVersion\s+.*', 'targetSdkVersion 34', content)
+          content = re.sub(r'targetSdk\s*=?\s*\d+', 'targetSdk = 34', content)
+          content = re.sub(r'minSdk\s*=?\s*flutter\.minSdkVersion', 'minSdk = 21', content)
+          content = re.sub(r'minSdkVersion\s+.*', 'minSdkVersion 21', content)
+
+          # Firebase plugin
+          if 'com.google.gms.google-services' not in content:
+              content = content.replace(
+                  'plugins {',
+                  'plugins {\n    id "com.google.gms.google-services"'
+              )
+
+          # Replace buildTypes with signing config + release keystore
+          signing_block = """
+              def keystoreProperties = new Properties()
+              def keystorePropertiesFile = rootProject.file('key.properties')
+              if (keystorePropertiesFile.exists()) {
+                  keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+              }
+
+              signingConfigs {
+                  release {
+                      keyAlias keystoreProperties['keyAlias']
+                      keyPassword keystoreProperties['keyPassword']
+                      storeFile file(keystoreProperties['storeFile'])
+                      storePassword keystoreProperties['storePassword']
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled true
+                      shrinkResources true
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+          """
+
+          content = re.sub(
+              r'buildTypes\s*\{[^}]*release\s*\{[^}]*\}[^}]*\}',
+              signing_block,
+              content,
+              flags=re.DOTALL
+          )
+
+          with open('android/app/build.gradle', 'w') as f:
+              f.write(content)
+          PYEOF
+
+      - name: Force MainActivity path
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/lumachat/app
+          cat > android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt << 'EOF'
+          package com.lumachat.app
+          import io.flutter.embedding.android.FlutterFragmentActivity
+          class MainActivity: FlutterFragmentActivity() {}
+          EOF
+
+      - name: Create ProGuard rules
+        run: |
+          cat > android/app/proguard-rules.pro << 'EOF'
+          -keep class io.flutter.app.** { *; }
+          -keep class io.flutter.plugin.** { *; }
+          -keep class io.flutter.util.** { *; }
+          -keep class io.flutter.view.** { *; }
+          -keep class io.flutter.** { *; }
+          -keep class io.flutter.plugins.** { *; }
+          -keep class androidx.lifecycle.** { *; }
+          -keep class com.google.firebase.** { *; }
+          -keep class com.google.android.gms.** { *; }
+          -keep class io.agora.** { *; }
+          -dontwarn io.agora.**
+          -keep class com.cloudinary.** { *; }
+          -dontwarn com.cloudinary.**
+          -keep class okhttp3.** { *; }
+          -keep class retrofit2.** { *; }
+          -dontwarn retrofit2.**
+          -keepclassmembers class * {
+              @com.google.gson.annotations.SerializedName <fields>;
+          }
+          -keepattributes SourceFile,LineNumberTable
+          -renamesourcefileattribute SourceFile
+          EOF
+
+      - name: Create AndroidManifest.xml
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+
+              <uses-sdk tools:overrideLibrary="com.google.firebase.auth" />
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.BLUETOOTH" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.READ_CONTACTS" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+              <application
+                  android:label="Luma Chat"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:allowBackup="true"
+                  android:fullBackupContent="true"
+                  android:largeHeap="true"
+                  android:hardwareAccelerated="true"
+                  android:extractNativeLibs="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"
+                        />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                      <intent-filter android:autoVerify="true">
+                          <action android:name="android.intent.action.VIEW"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.BROWSABLE"/>
+                          <data android:scheme="https"
+                                android:host="lumachat.app"
+                                android:pathPrefix="/invite"/>
+                      </intent-filter>
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.BROWSABLE"/>
+                          <data android:scheme="luma"
+                                android:host="invite"/>
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name="com.google.firebase.messaging.FirebaseMessagingService"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+                      </intent-filter>
+                  </service>
+
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+
+                  <meta-data
+                      android:name="com.google.firebase.messaging.default_notification_channel_id"
+                      android:value="luma_chat_channel"/>
+              </application>
+          </manifest>
+          EOF
+
+      - name: Create asset directories
+        run: mkdir -p assets/images assets/emojis assets/audio
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate app icons
+        run: flutter pub run flutter_launcher_icons
+
+      - name: Build APK (split per ABI)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload split APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: luma-chat-apks
+          path: build/app/outputs/flutter-apk/app-*-release.apk
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "build/app/outputs/flutter-apk/app-*-release.apk"
+          tag: v${{ github.run_number }}
+          name: "Luma Chat v${{ github.run_number }}"
+          body: "Luma Chat - Works on all Android 5.0+ phones"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
