@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -29,24 +31,75 @@ jobs:
           flutter-version: '3.22.0'
           channel: 'stable'
 
-      - name: Backup keystore before wiping android/
+      - name: Ensure release keystore exists
         run: |
           mkdir -p /tmp/backup
-          cp android/app/luma-release.jks /tmp/backup/ 2>/dev/null || echo "no keystore found"
-          cp android/key.properties /tmp/backup/ 2>/dev/null || echo "no key.properties found"
+          
+          # If keystore already exists in repo, back it up
+          if [ -f android/app/luma-release.jks ]; then
+            echo "✅ Keystore exists — backing up"
+            cp android/app/luma-release.jks /tmp/backup/luma-release.jks
+            if [ -f android/key.properties ]; then
+              cp android/key.properties /tmp/backup/key.properties
+            else
+              cat > /tmp/backup/key.properties << 'EOF'
+          storePassword=luma12345
+          keyPassword=luma12345
+          keyAlias=luma
+          storeFile=luma-release.jks
+          EOF
+            fi
+          else
+            echo "⚠️ Keystore missing — generating new one"
+            
+            # Generate fresh release keystore
+            keytool -genkeypair -v \
+              -keystore /tmp/backup/luma-release.jks \
+              -alias luma \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass luma12345 \
+              -keypass luma12345 \
+              -dname "CN=Luma Chat, OU=Mobile, O=Luma, L=Doha, ST=Qatar, C=QA"
+            
+            cat > /tmp/backup/key.properties << 'EOF'
+          storePassword=luma12345
+          keyPassword=luma12345
+          keyAlias=luma
+          storeFile=luma-release.jks
+          EOF
+            
+            # Commit keystore back to repo so future builds reuse it
+            mkdir -p android/app
+            cp /tmp/backup/luma-release.jks android/app/luma-release.jks
+            cp /tmp/backup/key.properties android/key.properties
+            
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f android/app/luma-release.jks android/key.properties
+            git commit -m "Add release keystore [skip ci]" || echo "nothing to commit"
+            git push || echo "push failed — continuing anyway"
+          fi
+          
+          echo "=== Backup contents ==="
           ls -la /tmp/backup/
+
+      - name: Backup google-services.json and keystore
+        run: |
+          cp android/app/google-services.json /tmp/google-services.json
+          ls -la /tmp/google-services.json
 
       - name: Create Android project
         run: |
-          cp android/app/google-services.json /tmp/google-services.json
           rm -rf android
           flutter create . --platforms=android --org com.lumachat --project-name app
           mkdir -p android/app
           cp /tmp/google-services.json android/app/
-          cp /tmp/backup/luma-release.jks android/app/ 2>/dev/null || true
-          cp /tmp/backup/key.properties android/ 2>/dev/null || true
+          cp /tmp/backup/luma-release.jks android/app/
+          cp /tmp/backup/key.properties android/
+          echo "=== Restored files ==="
           ls -la android/app/google-services.json
-          ls -la android/app/luma-release.jks || echo "keystore missing"
+          ls -la android/app/luma-release.jks
+          ls -la android/key.properties
 
       - name: Fix settings.gradle
         run: |
@@ -122,7 +175,7 @@ jobs:
           }
           EOF
 
-      - name: Create API config
+      - name: Create API config with Gemini key
         run: |
           cat > lib/services/api_config.dart << 'EOF'
           class ApiConfig {
@@ -169,7 +222,7 @@ jobs:
                   'plugins {\n    id "com.google.gms.google-services"'
               )
 
-          # Replace buildTypes with signing config + release keystore
+          # Replace buildTypes with release signing (conditional on key.properties)
           signing_block = """
               def keystoreProperties = new Properties()
               def keystorePropertiesFile = rootProject.file('key.properties')
@@ -179,16 +232,22 @@ jobs:
 
               signingConfigs {
                   release {
-                      keyAlias keystoreProperties['keyAlias']
-                      keyPassword keystoreProperties['keyPassword']
-                      storeFile file(keystoreProperties['storeFile'])
-                      storePassword keystoreProperties['storePassword']
+                      if (keystorePropertiesFile.exists()) {
+                          keyAlias keystoreProperties['keyAlias']
+                          keyPassword keystoreProperties['keyPassword']
+                          storeFile file(keystoreProperties['storeFile'])
+                          storePassword keystoreProperties['storePassword']
+                      }
                   }
               }
 
               buildTypes {
                   release {
-                      signingConfig signingConfigs.release
+                      if (keystorePropertiesFile.exists()) {
+                          signingConfig signingConfigs.release
+                      } else {
+                          signingConfig signingConfigs.debug
+                      }
                       minifyEnabled true
                       shrinkResources true
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -205,6 +264,10 @@ jobs:
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(content)
+
+          print("=== Final build.gradle ===")
+          with open('android/app/build.gradle', 'r') as f:
+              print(f.read())
           PYEOF
 
       - name: Force MainActivity path
