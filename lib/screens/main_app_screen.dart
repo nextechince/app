@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import '../../providers/auth_provider.dart' show LumaAuthProvider;
-import '../../providers/chat_provider.dart';
+
+import '../providers/auth_provider.dart' show LumaAuthProvider;
+import '../providers/chat_provider.dart';
+import 'contacts/contacts_screen.dart';
+import 'status/status_screen.dart';
+import 'settings/settings_screen.dart';
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({super.key});
@@ -158,9 +163,9 @@ class _MainAppScreenState extends State<MainAppScreen> {
           index: _bottomIndex,
           children: [
             _buildChatsTab(),
-            _buildContactsTab(),
-            _buildStatusTab(),
-            _buildSettingsTab(),
+            const ContactsScreen(),
+            const StatusScreen(),
+            const SettingsScreen(),
           ],
         ),
         floatingActionButton: _buildFAB(),
@@ -178,10 +183,22 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final isDark = theme.brightness == Brightness.dark;
 
     final items = const [
-      _NavItem(icon: Icons.chat_bubble_outline, active: Icons.chat_bubble, label: 'Chats'),
-      _NavItem(icon: Icons.contacts_outlined, active: Icons.contacts, label: 'Contacts'),
-      _NavItem(icon: Icons.donut_large_outlined, active: Icons.donut_large, label: 'Status'),
-      _NavItem(icon: Icons.settings_outlined, active: Icons.settings, label: 'Settings'),
+      _NavItem(
+          icon: Icons.chat_bubble_outline,
+          active: Icons.chat_bubble,
+          label: 'Chats'),
+      _NavItem(
+          icon: Icons.contacts_outlined,
+          active: Icons.contacts,
+          label: 'Contacts'),
+      _NavItem(
+          icon: Icons.donut_large_outlined,
+          active: Icons.donut_large,
+          label: 'Status'),
+      _NavItem(
+          icon: Icons.settings_outlined,
+          active: Icons.settings,
+          label: 'Settings'),
     ];
 
     return Container(
@@ -189,7 +206,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
         color: isDark ? const Color(0xFF1F1F1F) : Colors.white,
         border: Border(
           top: BorderSide(
-            color: isDark ? const Color(0xFF2F2F2F) : const Color(0xFFE4E4E5),
+            color:
+                isDark ? const Color(0xFF2F2F2F) : const Color(0xFFE4E4E5),
             width: 0.5,
           ),
         ),
@@ -212,7 +230,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(selected ? item.active : item.icon, size: 24, color: color),
+                      Icon(selected ? item.active : item.icon,
+                          size: 24, color: color),
                       const SizedBox(height: 2),
                       Text(
                         item.label,
@@ -234,40 +253,20 @@ class _MainAppScreenState extends State<MainAppScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // FAB
+  // FAB — only on Chats
   // ═══════════════════════════════════════════════════════════════════════
 
   Widget? _buildFAB() {
-    final theme = Theme.of(context);
+    if (_bottomIndex != 0) return null;
 
-    switch (_bottomIndex) {
-      case 0:
-        return FloatingActionButton(
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: Colors.white,
-          elevation: 2,
-          onPressed: () => _showNewChatOptions(context),
-          child: const Icon(Icons.edit_outlined),
-        );
-      case 1:
-        return FloatingActionButton(
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: Colors.white,
-          elevation: 2,
-          onPressed: () => Navigator.pushNamed(context, '/contacts'),
-          child: const Icon(Icons.person_add_outlined),
-        );
-      case 2:
-        return FloatingActionButton(
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: Colors.white,
-          elevation: 2,
-          onPressed: () => Navigator.pushNamed(context, '/create_status'),
-          child: const Icon(Icons.camera_alt_outlined),
-        );
-      default:
-        return null;
-    }
+    final theme = Theme.of(context);
+    return FloatingActionButton(
+      backgroundColor: theme.colorScheme.primary,
+      foregroundColor: Colors.white,
+      elevation: 2,
+      onPressed: () => _showNewChatOptions(context),
+      child: const Icon(Icons.edit_outlined),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -290,7 +289,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
   Widget _buildChatsAppBar() {
     final theme = Theme.of(context);
     final auth = context.watch<LumaAuthProvider>();
-    final avatar = auth.profile?['avatar_url'] as String?;
+    final avatar = auth.userPhotoUrl;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
@@ -326,7 +325,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
           ),
           IconButton(
             icon: Icon(Icons.more_vert, color: theme.colorScheme.onSurface),
-            onPressed: () => _showMenu(context),
+            onPressed: () => _showChatsMenu(context),
           ),
         ],
       ),
@@ -339,17 +338,17 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final isDark = theme.brightness == Brightness.dark;
 
     final chats = context.watch<ChatProvider>().chats;
-    final myUid = _myUid;
 
     final counts = <int, int>{
       0: chats.length,
-      1: chats.where((c) {
-        final unread = (c['unread_count'] as num?)?.toInt() ?? 0;
-        return unread > 0;
-      }).length,
+      1: chats
+          .where((c) => ((c['unread_count'] as num?)?.toInt() ?? 0) > 0)
+          .length,
       2: chats.where((c) => c['type'] == 'group').length,
       3: chats.where((c) => c['type'] == 'channel').length,
-      4: chats.where((c) => c['type'] == 'bot' || c['is_bot'] == true).length,
+      4: chats
+          .where((c) => c['type'] == 'bot' || c['is_bot'] == true)
+          .length,
     };
 
     final folders = [
@@ -400,7 +399,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: selected
                           ? theme.colorScheme.primary
@@ -416,7 +416,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
                         fontWeight: FontWeight.w600,
                         color: selected
                             ? Colors.white
-                            : theme.colorScheme.onSurface.withOpacity(0.7),
+                            : theme.colorScheme.onSurface
+                                .withOpacity(0.7),
                       ),
                     ),
                   ),
@@ -437,21 +438,21 @@ class _MainAppScreenState extends State<MainAppScreen> {
       builder: (context, chatProvider, _) {
         if (chatProvider.isLoading) {
           return Center(
-            child: CircularProgressIndicator(color: theme.colorScheme.primary),
+            child:
+                CircularProgressIndicator(color: theme.colorScheme.primary),
           );
         }
 
         final allChats = chatProvider.chats;
 
-        // Filter by folder
-        List<Map<String, dynamic>> visible = allChats.where((c) {
+        final List<Map<String, dynamic>> visible =
+            allChats.where((c) {
           final type = c['type'] as String? ?? 'direct';
           switch (_folderIndex) {
             case 0:
               return true;
             case 1:
-              final unread = (c['unread_count'] as num?)?.toInt() ?? 0;
-              return unread > 0;
+              return ((c['unread_count'] as num?)?.toInt() ?? 0) > 0;
             case 2:
               return type == 'group';
             case 3:
@@ -498,9 +499,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
             const SizedBox(height: 16),
             Text(
               t.$1,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Text(
@@ -516,7 +516,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  // ─── Chat tile ───
+  // ─── Chat tile with SWIPE actions ───
   Widget _buildChatTile(Map<String, dynamic> chat) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -535,7 +535,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
     if (isDirect) {
       final participants = List<String>.from(chat['participants'] ?? []);
-      otherUserId = participants.firstWhere((id) => id != myUid, orElse: () => '');
+      otherUserId =
+          participants.firstWhere((id) => id != myUid, orElse: () => '');
       if (otherUserId.isNotEmpty && !_userCache.containsKey(otherUserId)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _fetchOtherUser(otherUserId!);
@@ -555,18 +556,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
     }
 
     final lastMessage = chat['last_message'] ?? '';
-
-    // FIX: read int unread_count written by ChatProvider
     final unread = (chat['unread_count'] as num?)?.toInt() ?? 0;
 
-    // FIX: read fields ChatProvider actually writes
     final isPinned = chat['is_pinned'] == true;
     final participantsData =
         chat['participants_data'] as Map<String, dynamic>? ?? {};
     final myData = participantsData[myUid] as Map<String, dynamic>? ?? {};
     final isArchived = myData['is_archived'] == true;
 
-    // Mute: ChatProvider doesn't track this yet, default false
     final mutedFor = List<String>.from(chat['muted_for'] ?? []);
     final isMuted = mutedFor.contains(myUid);
 
@@ -588,14 +585,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 'otherUserId': otherUserId,
               };
 
-    final isSticker = lastMessage.toString().toLowerCase().contains('sticker');
+    final isSticker =
+        lastMessage.toString().toLowerCase().contains('sticker');
     final previewText = isBlockedByMe
         ? 'Blocked'
         : isSticker
             ? '🌟 Sticker'
             : lastMessage;
 
-    return InkWell(
+    final tile = InkWell(
       onTap: () => Navigator.pushNamed(context, route, arguments: routeArgs),
       onLongPress: () => _showChatContextMenu(
         context: context,
@@ -619,7 +617,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
               children: [
                 CircleAvatar(
                   radius: 27,
-                  backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+                  backgroundColor:
+                      theme.colorScheme.primary.withOpacity(0.15),
                   backgroundImage: (avatar != null && avatar.isNotEmpty)
                       ? NetworkImage(avatar)
                       : null,
@@ -649,11 +648,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
                         color: theme.colorScheme.primary,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isDark ? const Color(0xFF1F1F1F) : Colors.white,
+                          color: isDark
+                              ? const Color(0xFF1F1F1F)
+                              : Colors.white,
                           width: 2,
                         ),
                       ),
-                      child: const Icon(Icons.check, size: 10, color: Colors.white),
+                      child: const Icon(Icons.check,
+                          size: 10, color: Colors.white),
                     ),
                   ),
               ],
@@ -681,13 +683,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
                         const SizedBox(width: 4),
                         Icon(Icons.notifications_off,
                             size: 14,
-                            color: theme.colorScheme.onSurface.withOpacity(0.4)),
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.4)),
                       ],
                       if (isPinned) ...[
                         const SizedBox(width: 4),
                         Icon(Icons.push_pin,
                             size: 14,
-                            color: theme.colorScheme.onSurface.withOpacity(0.4)),
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.4)),
                       ],
                     ],
                   ),
@@ -701,8 +705,10 @@ class _MainAppScreenState extends State<MainAppScreen> {
                       color: isBlockedByMe
                           ? theme.colorScheme.error
                           : unread > 0
-                              ? theme.colorScheme.onSurface.withOpacity(0.75)
-                              : theme.colorScheme.onSurface.withOpacity(0.55),
+                              ? theme.colorScheme.onSurface
+                                  .withOpacity(0.75)
+                              : theme.colorScheme.onSurface
+                                  .withOpacity(0.55),
                     ),
                   ),
                 ],
@@ -720,14 +726,16 @@ class _MainAppScreenState extends State<MainAppScreen> {
                     color: unread > 0
                         ? theme.colorScheme.primary
                         : theme.colorScheme.onSurface.withOpacity(0.4),
-                    fontWeight: unread > 0 ? FontWeight.w500 : FontWeight.normal,
+                    fontWeight:
+                        unread > 0 ? FontWeight.w500 : FontWeight.normal,
                   ),
                 ),
                 if (unread > 0) ...[
                   const SizedBox(height: 4),
                   Container(
                     constraints: const BoxConstraints(minWidth: 22),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primary,
                       borderRadius: BorderRadius.circular(11),
@@ -749,10 +757,114 @@ class _MainAppScreenState extends State<MainAppScreen> {
         ),
       ),
     );
+
+    // Wrap in Slidable for swipe actions
+    return Slidable(
+      key: ValueKey(chatId),
+      startActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.5,
+        children: [
+          SlidableAction(
+            onPressed: (_) => _togglePin(chatId, isPinned),
+            backgroundColor: const Color(0xFF4FAE4F),
+            foregroundColor: Colors.white,
+            icon: isPinned ? Icons.push_pin_outlined : Icons.push_pin,
+            label: isPinned ? 'Unpin' : 'Pin',
+          ),
+          SlidableAction(
+            onPressed: (_) => _toggleMute(chatId, !isMuted),
+            backgroundColor: const Color(0xFFE0954A),
+            foregroundColor: Colors.white,
+            icon: isMuted
+                ? Icons.notifications_active_outlined
+                : Icons.notifications_off_outlined,
+            label: isMuted ? 'Unmute' : 'Mute',
+          ),
+        ],
+      ),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.5,
+        children: [
+          SlidableAction(
+            onPressed: (_) => _toggleArchive(chatId, isArchived),
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: Colors.white,
+            icon: isArchived
+                ? Icons.unarchive_outlined
+                : Icons.archive_outlined,
+            label: isArchived ? 'Unarchive' : 'Archive',
+          ),
+          SlidableAction(
+            onPressed: (_) =>
+                context.read<ChatProvider>().deleteChat(chatId),
+            backgroundColor: theme.colorScheme.error,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            label: 'Delete',
+          ),
+        ],
+      ),
+      child: tile,
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // FLOATING CONTEXT MENU
+  // FIRESTORE ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  Future<void> _togglePin(String chatId, bool currentlyPinned) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .update({'is_pinned': !currentlyPinned});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(currentlyPinned ? 'Unpinned' : 'Pinned'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        context.read<ChatProvider>().loadChats();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleArchive(String chatId, bool currentlyArchived) async {
+    try {
+      final provider = context.read<ChatProvider>();
+      if (currentlyArchived) {
+        await provider.unarchiveChat(chatId);
+      } else {
+        await provider.archiveChat(chatId);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleMute(String chatId, bool mute) async {
+    final myUid = _myUid;
+    try {
+      await FirebaseFirestore.instance.collection('chats').doc(chatId).update({
+        'muted_for': mute
+            ? FieldValue.arrayUnion([myUid])
+            : FieldValue.arrayRemove([myUid]),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mute ? 'Muted' : 'Unmuted'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        context.read<ChatProvider>().loadChats();
+      }
+    } catch (_) {}
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // LONG-PRESS MENU
   // ═══════════════════════════════════════════════════════════════════════
 
   Future<void> _showChatContextMenu({
@@ -772,13 +884,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final box = context.findRenderObject() as RenderBox?;
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (box == null || overlay == null) return;
 
     final position = RelativeRect.fromRect(
       Rect.fromPoints(
         box.localToGlobal(Offset.zero, ancestor: overlay),
-        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero),
+            ancestor: overlay),
       ),
       Offset.zero & overlay.size,
     );
@@ -828,7 +942,9 @@ class _MainAppScreenState extends State<MainAppScreen> {
         PopupMenuItem(
           value: 'archive',
           child: _menuRow(
-            icon: isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+            icon: isArchived
+                ? Icons.unarchive_outlined
+                : Icons.archive_outlined,
             label: isArchived ? 'Unarchive' : 'Archive',
             theme: theme,
           ),
@@ -911,7 +1027,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
     required ThemeData theme,
     bool danger = false,
   }) {
-    final color = danger ? theme.colorScheme.error : theme.colorScheme.onSurface;
+    final color =
+        danger ? theme.colorScheme.error : theme.colorScheme.onSurface;
     return Row(
       children: [
         Icon(icon, size: 20, color: color),
@@ -922,25 +1039,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ACTIONS
+  // CONFIRMATIONS
   // ═══════════════════════════════════════════════════════════════════════
-
-  Future<void> _toggleMute(String chatId, bool mute) async {
-    final myUid = _myUid;
-    try {
-      await FirebaseFirestore.instance.collection('chats').doc(chatId).update({
-        'muted_for': mute
-            ? FieldValue.arrayUnion([myUid])
-            : FieldValue.arrayRemove([myUid]),
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(mute ? 'Muted' : 'Unmuted')),
-        );
-        context.read<ChatProvider>().loadChats();
-      }
-    } catch (_) {}
-  }
 
   Future<void> _confirmClearMessages(String chatId) async {
     final myUid = _myUid;
@@ -1027,7 +1127,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  void _showMenu(BuildContext context) {
+  void _showChatsMenu(BuildContext context) {
     _showFlatSheet(
       context: context,
       children: [
@@ -1068,8 +1168,10 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  void _showFlatSheet(
-      {required BuildContext context, required List<Widget> children}) {
+  void _showFlatSheet({
+    required BuildContext context,
+    required List<Widget> children,
+  }) {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
@@ -1110,7 +1212,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
     bool danger = false,
   }) {
     final theme = Theme.of(context);
-    final color = danger ? theme.colorScheme.error : theme.colorScheme.onSurface;
+    final color =
+        danger ? theme.colorScheme.error : theme.colorScheme.onSurface;
     return ListTile(
       leading: Icon(icon, color: color),
       title: Text(label, style: TextStyle(color: color, fontSize: 15)),
@@ -1123,7 +1226,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Log out?'),
-        content: const Text('You will need to sign in again to use Luma Chat.'),
+        content:
+            const Text('You will need to sign in again to use Luma Chat.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -1144,148 +1248,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
       Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false);
     }
   }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // OTHER TABS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  Widget _buildContactsTab() {
-    final theme = Theme.of(context);
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                Text('Contacts',
-                    style: theme.textTheme.titleLarge
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () =>
-                      Navigator.pushNamed(context, '/global_search'),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Center(
-              child: Text(
-                'Contacts — coming soon',
-                style: TextStyle(
-                  color: theme.colorScheme.onSurface.withOpacity(0.5),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusTab() {
-    final theme = Theme.of(context);
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Text('Status',
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-          ),
-          Expanded(
-            child: Center(
-              child: Text(
-                'Status updates — coming soon',
-                style: TextStyle(
-                  color: theme.colorScheme.onSurface.withOpacity(0.5),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingsTab() {
-    final theme = Theme.of(context);
-    final auth = context.watch<LumaAuthProvider>();
-    final name = auth.profile?['display_name'] ?? 'User';
-    final avatar = auth.profile?['avatar_url'] as String?;
-
-    return SafeArea(
-      bottom: false,
-      child: ListView(
-        children: [
-          const SizedBox(height: 8),
-          ListTile(
-            leading: CircleAvatar(
-              radius: 26,
-              backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
-              backgroundImage: (avatar != null && avatar.isNotEmpty)
-                  ? NetworkImage(avatar)
-                  : null,
-              child: (avatar == null || avatar.isEmpty)
-                  ? Icon(Icons.person, color: theme.colorScheme.primary)
-                  : null,
-            ),
-            title: Text(name,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(auth.currentEmail ?? ''),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pushNamed(context, '/profile'),
-          ),
-          const Divider(height: 0.5),
-          ListTile(
-            leading: const Icon(Icons.palette_outlined),
-            title: const Text('Appearance'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pushNamed(context, '/appearance'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.lock_outline),
-            title: const Text('Privacy & Security'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pushNamed(context, '/security'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.notifications_outlined),
-            title: const Text('Notifications'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () =>
-                Navigator.pushNamed(context, '/notifications_settings'),
-          ),
-          const Divider(height: 0.5),
-          ListTile(
-            leading: Icon(Icons.logout, color: theme.colorScheme.error),
-            title: Text('Log out',
-                style: TextStyle(color: theme.colorScheme.error)),
-            onTap: () async {
-              final auth =
-                  Provider.of<LumaAuthProvider>(context, listen: false);
-              await auth.signOut();
-              if (!context.mounted) return;
-              Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
-            },
-          ),
-          const SizedBox(height: 32),
-        ],
-      ),
-    );
-  }
 }
 
 class _NavItem {
   final IconData icon;
   final IconData active;
   final String label;
-  const _NavItem({required this.icon, required this.active, required this.label});
+  const _NavItem(
+      {required this.icon, required this.active, required this.label});
 }
 
 class _Folder {
