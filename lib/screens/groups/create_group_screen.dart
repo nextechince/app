@@ -204,6 +204,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         debugPrint('Invitation creation failed: $e');
       }
 
+      // FIX: Wait for Firestore to resolve serverTimestamp before loading.
+      await Future.delayed(const Duration(milliseconds: 800));
       await chatProvider.loadChats();
 
       if (!mounted) return;
