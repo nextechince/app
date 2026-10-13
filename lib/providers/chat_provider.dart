@@ -101,18 +101,15 @@ class ChatProvider extends ChangeNotifier {
         return;
       }
 
+      // FIX: Removed .orderBy('last_message_at') because Firestore silently
+      // drops any doc whose orderBy field is still a pending serverTimestamp.
+      // We sort client-side instead.
       final snapshot = await _firestore
           .collection('chats')
           .where('participants', arrayContains: userId)
-          .orderBy('last_message_at', descending: true)
           .get();
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX: Fire ALL unread-count queries in parallel BEFORE the loop.
-      // Before: 20 chats = 20 sequential awaits = 2-6 seconds of blocking.
-      // After : 20 chats = 20 parallel awaits = ~300ms (bounded by the slowest one).
-      // Same result, ~10x faster.
-      // ═══════════════════════════════════════════════════════════════════════
+      // Fire all unread-count queries in parallel (much faster than sequential)
       final unreadFutures = <String, Future<int>>{};
       for (final doc in snapshot.docs) {
         unreadFutures[doc.id] = _getUnreadCount(doc.id, userId);
@@ -125,7 +122,7 @@ class ChatProvider extends ChangeNotifier {
         final chatId = doc.id;
         final chatType = chat['type'] as String? ?? 'direct';
 
-        // Skip deleted chats
+        // Skip chats the user deleted for themselves
         final deletedFor = List<String>.from(chat['deleted_for'] ?? []);
         if (deletedFor.contains(userId)) continue;
 
@@ -137,7 +134,8 @@ class ChatProvider extends ChangeNotifier {
             (id) => id != userId,
             orElse: () => '',
           );
-          if (otherUserId.isNotEmpty && _blockedUsers.contains(otherUserId)) {
+          if (otherUserId.isNotEmpty &&
+              _blockedUsers.contains(otherUserId)) {
             continue;
           }
         }
@@ -145,14 +143,14 @@ class ChatProvider extends ChangeNotifier {
         // Skip archived
         final participantsData =
             chat['participants_data'] as Map<String, dynamic>? ?? {};
-        final myData = participantsData[userId] as Map<String, dynamic>? ?? {};
+        final myData =
+            participantsData[userId] as Map<String, dynamic>? ?? {};
         if (myData['is_archived'] == true) continue;
 
-        // FIX: Await the pre-fired future — no new query, just waiting on
-        // one that's already in-flight.
+        // Await the pre-fired future — no new query
         final unreadCount = await unreadFutures[chatId]!;
 
-        // Member count
+        // Member count for groups/channels
         int participantsCount = 0;
         if (chatType == 'group' || chatType == 'channel') {
           participantsCount = participants.length;
@@ -160,7 +158,10 @@ class ChatProvider extends ChangeNotifier {
 
         final role = myData['role'] ?? 'member';
 
-        // Read last_message_at with fallback
+        // Read last_message_at with fallbacks:
+        // 1) last_message_at if valid Timestamp/DateTime
+        // 2) created_at if the above is null/future
+        // 3) DateTime.now() as last resort so the chat lands at the top
         DateTime? lastMessageAt;
         final rawLastMessageAt = chat['last_message_at'];
         if (rawLastMessageAt is Timestamp) {
@@ -168,15 +169,17 @@ class ChatProvider extends ChangeNotifier {
         } else if (rawLastMessageAt is DateTime) {
           lastMessageAt = rawLastMessageAt;
         }
+
         if (lastMessageAt == null ||
-            lastMessageAt.isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
+            lastMessageAt
+                .isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
           final createdAt = chat['created_at'];
           if (createdAt is Timestamp) {
             lastMessageAt = createdAt.toDate();
           } else if (createdAt is DateTime) {
             lastMessageAt = createdAt;
           } else {
-            lastMessageAt = null;
+            lastMessageAt = DateTime.now();
           }
         }
 
@@ -190,7 +193,7 @@ class ChatProvider extends ChangeNotifier {
         });
       }
 
-      // Sort: pinned first, then by most recent
+      // Sort client-side: pinned first, then most recent
       formattedChats.sort((a, b) {
         final aPinned = a['is_pinned'] == true;
         final bPinned = b['is_pinned'] == true;
@@ -288,7 +291,8 @@ class ChatProvider extends ChangeNotifier {
           .get();
 
       for (final doc in existingQuery.docs) {
-        final participants = List<String>.from(doc.data()['participants'] ?? []);
+        final participants =
+            List<String>.from(doc.data()['participants'] ?? []);
         if (participants.contains(otherUserId)) {
           await loadChats();
           return _chats.firstWhere(
@@ -503,7 +507,8 @@ class ChatProvider extends ChangeNotifier {
       final isOwner = chatData['created_by'] == userId;
 
       if (isOwner) {
-        _error = 'Owner cannot leave. Transfer ownership or delete the group.';
+        _error =
+            'Owner cannot leave. Transfer ownership or delete the group.';
         notifyListeners();
         return;
       }
