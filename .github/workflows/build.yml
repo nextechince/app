@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -31,71 +32,73 @@ jobs:
           flutter-version: '3.22.0'
           channel: 'stable'
 
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 1 — Ensure a release keystore exists (generate + commit if missing)
+      # ═══════════════════════════════════════════════════════════════════════
       - name: Ensure release keystore exists
         run: |
           mkdir -p /tmp/backup
-          
-          # If keystore already exists in repo, back it up
-          if [ -f android/app/luma-release.jks ]; then
-            echo "✅ Keystore exists — backing up"
+
+          if [ -f android/app/luma-release.jks ] && [ -f android/key.properties ]; then
+            echo "✅ Keystore already exists in repo — backing up"
             cp android/app/luma-release.jks /tmp/backup/luma-release.jks
-            if [ -f android/key.properties ]; then
-              cp android/key.properties /tmp/backup/key.properties
-            else
-              cat > /tmp/backup/key.properties << 'EOF'
-          storePassword=luma12345
-          keyPassword=luma12345
-          keyAlias=luma
-          storeFile=luma-release.jks
-          EOF
-            fi
+            cp android/key.properties /tmp/backup/key.properties
           else
-            echo "⚠️ Keystore missing — generating new one"
-            
-            # Generate fresh release keystore
+            echo "⚠️ Keystore missing — generating fresh"
+
+            mkdir -p android/app
+
             keytool -genkeypair -v \
               -keystore /tmp/backup/luma-release.jks \
               -alias luma \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass luma12345 \
               -keypass luma12345 \
-              -dname "CN=Luma Chat, OU=Mobile, O=Luma, L=Doha, ST=Qatar, C=QA"
-            
+              -dname "CN=Luma Chat, OU=Mobile, O=Luma, L=London, ST=London, C=GB"
+
             cat > /tmp/backup/key.properties << 'EOF'
           storePassword=luma12345
           keyPassword=luma12345
           keyAlias=luma
           storeFile=luma-release.jks
           EOF
-            
-            # Commit keystore back to repo so future builds reuse it
-            mkdir -p android/app
+
+            # Copy into repo so we can commit them
             cp /tmp/backup/luma-release.jks android/app/luma-release.jks
             cp /tmp/backup/key.properties android/key.properties
-            
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            # Commit back to repo so future builds reuse it
+            git config user.name "Luma Chat CI"
+            git config user.email "actions@github.com"
             git add -f android/app/luma-release.jks android/key.properties
-            git commit -m "Add release keystore [skip ci]" || echo "nothing to commit"
+            git commit -m "Add release signing keystore [skip ci]" || echo "nothing to commit"
             git push || echo "push failed — continuing anyway"
+
+            echo "✅ Keystore generated and committed"
           fi
-          
-          echo "=== Backup contents ==="
+
           ls -la /tmp/backup/
 
-      - name: Backup google-services.json and keystore
+      - name: Backup keystore + google-services.json
         run: |
+          mkdir -p /tmp/backup
           cp android/app/google-services.json /tmp/google-services.json
-          ls -la /tmp/google-services.json
+          cp android/app/luma-release.jks /tmp/backup/luma-release.jks
+          cp android/key.properties /tmp/backup/key.properties
+          echo "=== Backed up ==="
+          ls -la /tmp/backup/
 
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 2 — Create fresh Android project + restore critical files
+      # ═══════════════════════════════════════════════════════════════════════
       - name: Create Android project
         run: |
           rm -rf android
           flutter create . --platforms=android --org com.lumachat --project-name app
           mkdir -p android/app
-          cp /tmp/google-services.json android/app/
-          cp /tmp/backup/luma-release.jks android/app/
-          cp /tmp/backup/key.properties android/
+          cp /tmp/google-services.json android/app/google-services.json
+          cp /tmp/backup/luma-release.jks android/app/luma-release.jks
+          cp /tmp/backup/key.properties android/key.properties
           echo "=== Restored files ==="
           ls -la android/app/google-services.json
           ls -la android/app/luma-release.jks
@@ -165,6 +168,9 @@ jobs:
           distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
           EOF
 
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 3 — Config files
+      # ═══════════════════════════════════════════════════════════════════════
       - name: Create Cloudinary config
         run: |
           cat > lib/services/cloudinary_config.dart << 'EOF'
@@ -193,6 +199,9 @@ jobs:
           }
           EOF
 
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 4 — Configure build.gradle with release signing
+      # ═══════════════════════════════════════════════════════════════════════
       - name: Fix app build.gradle for ALL phones
         run: |
           python3 << 'PYEOF'
@@ -222,7 +231,7 @@ jobs:
                   'plugins {\n    id "com.google.gms.google-services"'
               )
 
-          # Replace buildTypes with release signing (conditional on key.properties)
+          # Replace buildTypes with release signing block
           signing_block = """
               def keystoreProperties = new Properties()
               def keystorePropertiesFile = rootProject.file('key.properties')
@@ -264,10 +273,6 @@ jobs:
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(content)
-
-          print("=== Final build.gradle ===")
-          with open('android/app/build.gradle', 'r') as f:
-              print(f.read())
           PYEOF
 
       - name: Force MainActivity path
