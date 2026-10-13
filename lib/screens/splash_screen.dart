@@ -52,7 +52,6 @@ class _SplashScreenState extends State<SplashScreen>
     final pendingPhone = prefs.getString('pending_phone');
     final currentUser = FirebaseAuth.instance.currentUser;
 
-    // Signed-in Firebase user → main or setup
     if (currentUser != null) {
       try {
         final doc = await FirebaseFirestore.instance
@@ -76,7 +75,6 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
-    // No user — check pending flow
     if (pendingPhone == null) {
       Navigator.pushReplacementNamed(context, '/phone_entry');
       return;
@@ -98,115 +96,118 @@ class _SplashScreenState extends State<SplashScreen>
     return Scaffold(
       backgroundColor:
           isDark ? const Color(0xFF212121) : const Color(0xFFFFFFFF),
-      body: SafeArea(
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
-            return Column(
-              children: [
-                // Top spacer — pushes content down slightly
-                const Spacer(flex: 3),
-
-                // ── App logo.png — no container, no glow, just the image ──
-                ScaleTransition(
-                  scale: _scale,
-                  child: FadeTransition(
-                    opacity: _fade,
-                    child: SizedBox(
-                      width: 120,
-                      height: 120,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primary,
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: const Center(
-                              child: Icon(
-                                Icons.chat_bubble_rounded,
-                                color: Colors.white,
-                                size: 56,
+      body: Stack(
+        children: [
+          // Centered content
+          Center(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Logo
+                    ScaleTransition(
+                      scale: _scale,
+                      child: FadeTransition(
+                        opacity: _fade,
+                        child: SizedBox(
+                          width: 120,
+                          height: 120,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: Image.asset(
+                              'assets/images/logo.png',
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(28),
+                                ),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.chat_bubble_rounded,
+                                    color: Colors.white,
+                                    size: 56,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(height: 28),
+                    const SizedBox(height: 28),
 
-                // ── App name ──
-                FadeTransition(
-                  opacity: _fade,
-                  child: Text(
-                    'Luma Chat',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                // ── Tagline ──
-                FadeTransition(
-                  opacity: _fade,
-                  child: Text(
-                    'Fast. Simple. Secure.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color:
-                          theme.colorScheme.onSurface.withOpacity(0.5),
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ),
-
-                const Spacer(flex: 4),
-
-                // ── Small, subtle loading indicator at bottom ──
-                FadeTransition(
-                  opacity: _fade,
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        theme.colorScheme.primary.withOpacity(0.6),
+                    FadeTransition(
+                      opacity: _fade,
+                      child: Text(
+                        'Luma Chat',
+                        style: theme.textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                          letterSpacing: -0.5,
+                        ),
                       ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(height: 32),
+                    const SizedBox(height: 8),
 
-                // ── Footer ──
-                FadeTransition(
-                  opacity: _fade,
-                  child: Text(
-                    'from Luma',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface
-                          .withOpacity(0.3),
-                      fontSize: 11,
-                      letterSpacing: 0.5,
+                    FadeTransition(
+                      opacity: _fade,
+                      child: Text(
+                        'Fast. Simple. Secure.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color:
+                              theme.colorScheme.onSurface.withOpacity(0.5),
+                          letterSpacing: 0.2,
+                        ),
+                      ),
                     ),
+
+                    const SizedBox(height: 48),
+
+                    FadeTransition(
+                      opacity: _fade,
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            theme.colorScheme.primary.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+
+          // Footer pinned to bottom
+          Positioned(
+            bottom: 24,
+            left: 0,
+            right: 0,
+            child: FadeTransition(
+              opacity: _fade,
+              child: Center(
+                child: Text(
+                  'from Luma',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                    fontSize: 11,
+                    letterSpacing: 0.5,
                   ),
                 ),
-
-                const SizedBox(height: 16),
-              ],
-            );
-          },
-        ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
