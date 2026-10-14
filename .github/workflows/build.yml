@@ -63,11 +63,9 @@ jobs:
           storeFile=luma-release.jks
           EOF
 
-            # Copy into repo so we can commit them
             cp /tmp/backup/luma-release.jks android/app/luma-release.jks
             cp /tmp/backup/key.properties android/key.properties
 
-            # Commit back to repo so future builds reuse it
             git config user.name "Luma Chat CI"
             git config user.email "actions@github.com"
             git add -f android/app/luma-release.jks android/key.properties
@@ -210,11 +208,9 @@ jobs:
           with open('android/app/build.gradle', 'r') as f:
               content = f.read()
 
-          # Force package name
           content = re.sub(r'namespace\s+"[^"]*"', 'namespace "com.lumachat.app"', content)
           content = re.sub(r'applicationId\s+"[^"]*"', 'applicationId "com.lumachat.app"', content)
 
-          # Pin SDKs
           content = re.sub(r'compileSdk\s*=?\s*flutter\.compileSdkVersion', 'compileSdk = 34', content)
           content = re.sub(r'compileSdkVersion\s+.*', 'compileSdkVersion 34', content)
           content = re.sub(r'compileSdk\s*=?\s*\d+', 'compileSdk = 34', content)
@@ -224,14 +220,12 @@ jobs:
           content = re.sub(r'minSdk\s*=?\s*flutter\.minSdkVersion', 'minSdk = 21', content)
           content = re.sub(r'minSdkVersion\s+.*', 'minSdkVersion 21', content)
 
-          # Firebase plugin
           if 'com.google.gms.google-services' not in content:
               content = content.replace(
                   'plugins {',
                   'plugins {\n    id "com.google.gms.google-services"'
               )
 
-          # Replace buildTypes with release signing block
           signing_block = """
               def keystoreProperties = new Properties()
               def keystorePropertiesFile = rootProject.file('key.properties')
@@ -403,15 +397,23 @@ jobs:
       - name: Create asset directories
         run: mkdir -p assets/images assets/emojis assets/audio
 
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 5 — Wipe stale pub cache + fetch dependencies
+      # ═══════════════════════════════════════════════════════════════════════
       - name: Wipe stale pub cache
-       run: rm -rf ~/.pub-cache/hosted/pub.dev/record* pubspec.lock
+        run: |
+          rm -rf ~/.pub-cache/hosted/pub.dev/record*
+          rm -f pubspec.lock
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Show resolved record version
+        run: flutter pub deps --style=compact | grep record || true
 
       - name: Generate app icons
         run: flutter pub run flutter_launcher_icons
 
-      - name: Show resolved record version
-        run: flutter pub deps --style=compact | grep record
-    
       - name: Build APK (split per ABI)
         run: flutter build apk --release --split-per-abi
 
