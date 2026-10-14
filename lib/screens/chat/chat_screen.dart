@@ -9,7 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -19,7 +19,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:provider/provider.dart';
-import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
@@ -30,6 +29,33 @@ import '../../services/call_service.dart';
 import '../../services/cloudinary_service.dart';
 import '../../services/invitation_service.dart';
 import '../calls/call_screen.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOCAL NATIVE RECORDER — no external package
+// ═══════════════════════════════════════════════════════════════════════════
+class LocalRecorder {
+  static const _channel = MethodChannel('com.lumachat.app/recorder');
+
+  Future<bool> hasPermission() async => true;
+
+  Future<void> start(String path) async {
+    await _channel.invokeMethod('start', {'path': path});
+  }
+
+  Future<String?> stop() async {
+    return await _channel.invokeMethod<String>('stop');
+  }
+
+  Future<void> cancel() async {
+    await _channel.invokeMethod('cancel');
+  }
+
+  Future<void> dispose() async {
+    try {
+      await _channel.invokeMethod('cancel');
+    } catch (_) {}
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN SCREEN
@@ -64,7 +90,7 @@ class _ChatScreenState extends State<ChatScreen>
   final _messageFocusNode = FocusNode();
 
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final Record _audioRecorder = Record();
+  final LocalRecorder _audioRecorder = LocalRecorder();
   final ImagePicker _picker = ImagePicker();
 
   String? _chatId;
@@ -115,10 +141,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool _multiSelectMode = false;
   final Set<String> _selectedMessageIds = {};
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TELEGRAM INPUT BAR STATE
-  // ═══════════════════════════════════════════════════════════════════════
-  /// null = keyboard mode, otherwise 'emoji' / 'sticker' / 'gif'
   String? _panelMode;
   String _pickerTab = 'emoji';
   double _keyboardHeight = 300;
@@ -180,9 +202,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool _loadingGifs = false;
   bool _gifsLoaded = false;
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // VOICE RECORDING — Telegram hold-to-record with slide-cancel
-  // ═══════════════════════════════════════════════════════════════════════
   bool _isRecording = false;
   bool _isRecordingLocked = false;
   double _recordingSlideOffset = 0;
@@ -242,7 +261,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onTextChanged() {
-    // Only rebuild the input bar (via ValueListenableBuilder) and trigger typing
     _startTyping();
   }
 
@@ -294,9 +312,6 @@ class _ChatScreenState extends State<ChatScreen>
     _loadWallpaper();
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // WALLPAPER
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadWallpaper() async {
     if (_currentUserId == null) return;
     _wallpaperSub?.cancel();
@@ -318,9 +333,6 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // CHAT INFO + SUBSCRIPTIONS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadChatInfoAndStart() async {
     try {
       final doc = await FirebaseFirestore.instance
@@ -603,9 +615,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // LOAD MESSAGES
-  // ═══════════════════════════════════════════════════════════════════════
   List<Map<String, dynamic>> _filterDocs(
       Iterable<QueryDocumentSnapshot> docs) {
     final loaded = <Map<String, dynamic>>[];
@@ -892,7 +901,6 @@ class _ChatScreenState extends State<ChatScreen>
         });
       }
 
-      // Non-blocking link preview fetch
       if (type == 'text' && linkPreview == null) {
         final url = _detectFirstUrl(content);
         if (url != null &&
@@ -1123,7 +1131,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // VOICE RECORDING — Telegram hold-to-record with slide-cancel
+  // VOICE RECORDING — uses native MediaRecorder via MethodChannel
   // ═══════════════════════════════════════════════════════════════════════
   Future<void> _startRecordingTelegram() async {
     try {
@@ -1133,13 +1141,7 @@ class _ChatScreenState extends State<ChatScreen>
       final path =
           '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-      await _audioRecorder.start(
-        path,
-        encoder: AudioEncoder.aacLc,
-      );
-        
-        
-      
+      await _audioRecorder.start(path);
 
       if (!mounted) return;
       setState(() {
@@ -1179,6 +1181,18 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       _recordingTimer?.cancel();
       _recordingSecondsTimer?.cancel();
+
+      if (!send) {
+        await _audioRecorder.cancel();
+        if (!mounted) return;
+        setState(() {
+          _isRecording = false;
+          _isRecordingLocked = false;
+          _recordingSlideOffset = 0;
+        });
+        return;
+      }
+
       final path = await _audioRecorder.stop();
       if (!mounted) return;
       setState(() {
@@ -1187,13 +1201,7 @@ class _ChatScreenState extends State<ChatScreen>
         _recordingSlideOffset = 0;
       });
 
-      if (!send || path == null) {
-        if (path != null) {
-          final f = File(path);
-          if (await f.exists()) await f.delete();
-        }
-        return;
-      }
+      if (path == null) return;
 
       final file = File(path);
       final size = await file.length();
@@ -1727,7 +1735,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGE OPTIONS — Telegram style with horizontal reaction row + vertical menu
+  // MESSAGE OPTIONS
   // ═══════════════════════════════════════════════════════════════════════
   void _showMessageOptions(Map<String, dynamic> m) {
     final canForward = Provider.of<SettingsProvider>(context, listen: false)
@@ -2526,11 +2534,6 @@ class _ChatScreenState extends State<ChatScreen>
                         : Colors.white,
                     shape: BoxShape.circle,
                     border: Border.all(color: theme.dividerColor),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 6),
-                    ],
                   ),
                   child: Icon(Icons.keyboard_arrow_down,
                       color: theme.colorScheme.onSurface, size: 22),
@@ -2542,9 +2545,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HEADER — Telegram-style: circular back, avatar+name+timer, phone, 3-dot
-  // ═══════════════════════════════════════════════════════════════════════
   PreferredSizeWidget _buildHeader(ThemeData theme) {
     final displayName = _otherUserNickname ?? _chatName ?? 'Chat';
     final verified = _userCache[_otherUserId]?['is_verified'] == true;
@@ -2569,9 +2569,6 @@ class _ChatScreenState extends State<ChatScreen>
     } else if (_otherUserLastSeen != null && _otherLastSeenVisible) {
       status = 'last seen ${_timeAgo(_otherUserLastSeen!)}';
       statusColor = Colors.white70;
-    } else if (_isGroup || _isChannel) {
-      status = 'Tap for info';
-      statusColor = Colors.white70;
     } else {
       status = 'last seen recently';
       statusColor = Colors.white70;
@@ -2587,7 +2584,6 @@ class _ChatScreenState extends State<ChatScreen>
             height: 60,
             child: Row(
               children: [
-                // Back circle
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
                   child: _headerCircle(
@@ -2596,8 +2592,6 @@ class _ChatScreenState extends State<ChatScreen>
                     onTap: () => Navigator.pop(context),
                   ),
                 ),
-
-                // Avatar + Title
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
@@ -2724,19 +2718,8 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                   ),
                 ),
-
-                // Voice call
-                _headerCircle(
-                  theme,
-                  icon: Icons.call,
-                  onTap: () => _startCall(false),
-                ),
-                // 3-dot
-                _headerCircle(
-                  theme,
-                  icon: Icons.more_vert,
-                  onTap: _showMoreMenu,
-                ),
+                _headerCircle(theme, icon: Icons.call, onTap: () => _startCall(false)),
+                _headerCircle(theme, icon: Icons.more_vert, onTap: _showMoreMenu),
                 const SizedBox(width: 4),
               ],
             ),
@@ -2751,16 +2734,19 @@ class _ChatScreenState extends State<ChatScreen>
     required IconData icon,
     required VoidCallback onTap,
   }) {
-    return Material(
-      color: Colors.black.withOpacity(0.18),
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(
-          width: 40,
-          height: 40,
-          child: Icon(icon, color: Colors.white, size: 20),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: Colors.black.withOpacity(0.18),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
         ),
       ),
     );
@@ -2883,9 +2869,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // BANNERS
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildPinnedBanner(ThemeData theme) {
     return GestureDetector(
       onTap: () {
@@ -3016,9 +2999,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGE LIST
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildMessageList(ThemeData theme) {
     final list = _messages.reversed.toList();
     return ListView.builder(
@@ -3317,9 +3297,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TELEGRAM VOICE RECORDING BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildRecordingBar(ThemeData theme) {
     const slideThreshold = -80.0;
     final slidingToCancel = _recordingSlideOffset < slideThreshold;
@@ -3405,9 +3382,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TELEGRAM INPUT BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildInputBar(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final disabled = !_canSend ||
@@ -3423,7 +3397,6 @@ class _ChatScreenState extends State<ChatScreen>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // GIF chip
             Padding(
               padding: const EdgeInsets.only(right: 6),
               child: GestureDetector(
@@ -3463,7 +3436,6 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
 
-            // Message field
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 140),
@@ -3471,47 +3443,41 @@ class _ChatScreenState extends State<ChatScreen>
                   color: isDark ? const Color(0xFF242F3D) : Colors.white,
                   borderRadius: BorderRadius.circular(22),
                 ),
-                child: ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _messageController,
-                  builder: (_, val, __) {
-                    return TextField(
-                      controller: _messageController,
-                      focusNode: _messageFocusNode,
-                      enabled: !disabled,
-                      minLines: 1,
-                      maxLines: null,
-                      keyboardType: TextInputType.multiline,
-                      textInputAction: TextInputAction.newline,
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface,
-                        fontSize: 15,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: disabled
-                            ? 'Only admins can send'
-                            : 'Message',
-                        hintStyle: TextStyle(
-                          color:
-                              theme.colorScheme.onSurface.withOpacity(0.4),
-                          fontSize: 15,
-                        ),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
-                      ),
-                      onTap: () {
-                        if (_panelMode != null) {
-                          setState(() => _panelMode = null);
-                        }
-                      },
-                    );
+                child: TextField(
+                  controller: _messageController,
+                  focusNode: _messageFocusNode,
+                  enabled: !disabled,
+                  minLines: 1,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface,
+                    fontSize: 15,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: disabled
+                        ? 'Only admins can send'
+                        : 'Message',
+                    hintStyle: TextStyle(
+                      color:
+                          theme.colorScheme.onSurface.withOpacity(0.4),
+                      fontSize: 15,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                  ),
+                  onTap: () {
+                    if (_panelMode != null) {
+                      setState(() => _panelMode = null);
+                    }
                   },
                 ),
               ),
             ),
             const SizedBox(width: 6),
 
-            // Attach
             GestureDetector(
               onTap: disabled ? null : () => _showAttachmentSheet(context),
               child: Container(
@@ -3526,47 +3492,52 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
 
-            // Send/Mic
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _messageController,
-              builder: (_, val, __) {
-                final hasText = val.text.trim().isNotEmpty;
-                return GestureDetector(
-                  onLongPressStart:
-                      (disabled || hasText) ? null : (d) {
-                    _recordingDragStartX = d.globalPosition.dx;
-                    _startRecordingTelegram();
-                  },
-                  onLongPressMoveUpdate:
-                      (disabled || hasText) ? null : (d) {
-                    final start = _recordingDragStartX;
-                    if (start == null) return;
-                    setState(() {
-                      _recordingSlideOffset =
-                          d.globalPosition.dx - start;
-                    });
-                  },
-                  onLongPressEnd: (disabled || hasText) ? null : (_) {
-                    final cancelled = _recordingSlideOffset < -80;
-                    _recordingDragStartX = null;
-                    _stopRecordingTelegram(send: !cancelled);
-                  },
-                  onTap: (hasText && !disabled) ? _sendTextMessage : null,
-                  child: Container(
-                    width: 46,
-                    height: 46,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF3390EC),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      hasText ? Icons.send : Icons.mic,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                );
-              },
+            GestureDetector(
+              onLongPressStart:
+                  (disabled || _messageController.text.trim().isNotEmpty)
+                      ? null
+                      : (d) {
+                          _recordingDragStartX = d.globalPosition.dx;
+                          _startRecordingTelegram();
+                        },
+              onLongPressMoveUpdate:
+                  (disabled || _messageController.text.trim().isNotEmpty)
+                      ? null
+                      : (d) {
+                          final start = _recordingDragStartX;
+                          if (start == null) return;
+                          setState(() {
+                            _recordingSlideOffset =
+                                d.globalPosition.dx - start;
+                          });
+                        },
+              onLongPressEnd:
+                  (disabled || _messageController.text.trim().isNotEmpty)
+                      ? null
+                      : (_) {
+                          final cancelled = _recordingSlideOffset < -80;
+                          _recordingDragStartX = null;
+                          _stopRecordingTelegram(send: !cancelled);
+                        },
+              onTap:
+                  (_messageController.text.trim().isNotEmpty && !disabled)
+                      ? _sendTextMessage
+                      : null,
+              child: Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF3390EC),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _messageController.text.trim().isNotEmpty
+                      ? Icons.send
+                      : Icons.mic,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
             ),
           ],
         ),
@@ -3574,9 +3545,24 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PICKER PANEL — Telegram style with bottom tabs
-  // ═══════════════════════════════════════════════════════════════════════
+  void _togglePanel(String mode) {
+    final wasOpen = _panelMode == mode;
+    setState(() {
+      if (wasOpen) {
+        _panelMode = null;
+      } else {
+        _panelMode = mode;
+        _pickerTab = mode;
+        if (mode == 'gif' && !_gifsLoaded) _loadGifs();
+      }
+    });
+    if (wasOpen) {
+      _messageFocusNode.requestFocus();
+    } else {
+      _messageFocusNode.unfocus();
+    }
+  }
+
   Widget _buildPickerPanel(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     return Container(
@@ -3601,7 +3587,6 @@ class _ChatScreenState extends State<ChatScreen>
               ],
             ),
           ),
-          // Bottom tab bar
           Container(
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF17212B) : Colors.white,
@@ -3660,12 +3645,10 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ── Emoji panel ───────────────────────────────────────────────────────
   Widget _buildEmojiPanel(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     return Column(
       children: [
-        // Search bar + favorites row (decorative for now)
         Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Container(
@@ -3692,8 +3675,6 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           ),
         ),
-
-        // Category row
         SizedBox(
           height: 36,
           child: ListView(
@@ -3726,7 +3707,6 @@ class _ChatScreenState extends State<ChatScreen>
             }).toList(),
           ),
         ),
-
         Expanded(
           child: GridView.builder(
             padding: const EdgeInsets.all(10),
@@ -3761,12 +3741,10 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ── Sticker panel ─────────────────────────────────────────────────────
   Widget _buildStickerPanel(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     return Column(
       children: [
-        // Header
         Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Row(
@@ -3800,8 +3778,6 @@ class _ChatScreenState extends State<ChatScreen>
             ],
           ),
         ),
-
-        // Search (decorative)
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 12),
           height: 36,
@@ -3827,8 +3803,6 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
         const SizedBox(height: 8),
-
-        // Pack tabs
         SizedBox(
           height: 32,
           child: ListView(
@@ -3843,7 +3817,6 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
         const SizedBox(height: 6),
-
         Expanded(
           child: _loadingStickers
               ? const Center(
@@ -3949,15 +3922,6 @@ class _ChatScreenState extends State<ChatScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: theme.dividerColor,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
               Text('Create Sticker',
                   style: theme.textTheme.titleMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
@@ -3987,7 +3951,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ── Sticker long-press options (matches image 3) ──────────────────────
   void _showStickerOptions(Map<String, dynamic> s, bool isMine) {
     final theme = Theme.of(context);
     showModalBottomSheet(
@@ -4004,7 +3967,6 @@ class _ChatScreenState extends State<ChatScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 8),
-            // Sticker preview
             SizedBox(
               height: 140,
               child: Center(
@@ -4022,36 +3984,36 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
             Divider(height: 1, color: theme.dividerColor),
-            _sheetTile(
-              s['favorite'] == true ? Icons.star : Icons.star_border,
-              s['favorite'] == true
+            ListTile(
+              leading: Icon(
+                  s['favorite'] == true ? Icons.star : Icons.star_border,
+                  color: const Color(0xFFD4A73A)),
+              title: Text(s['favorite'] == true
                   ? 'Remove from Favorites'
-                  : 'Add to Favorites',
-              () {
+                  : 'Add to Favorites'),
+              onTap: () {
                 Navigator.pop(context);
                 _toggleFavoriteSticker(s);
               },
-              color: const Color(0xFFD4A73A),
             ),
-            _sheetTile(Icons.copy, 'Copy', () {
-              Navigator.pop(context);
-              Clipboard.setData(ClipboardData(text: s['url'] as String));
-            }),
-            _sheetTile(Icons.share, 'Share', () {
-              Navigator.pop(context);
-            }),
             if (isMine)
-              _sheetTile(Icons.delete_outline, 'Delete sticker', () {
-                Navigator.pop(context);
-                _deleteSticker(s['id']);
-              }, color: theme.colorScheme.error),
+              ListTile(
+                leading: Icon(Icons.delete_outline,
+                    color: theme.colorScheme.error),
+                title: Text('Delete sticker',
+                    style:
+                        TextStyle(color: theme.colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteSticker(s['id']);
+                },
+              ),
           ],
         ),
       ),
     );
   }
 
-  // ── GIF panel ─────────────────────────────────────────────────────────
   Widget _buildGifPanel(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     return Column(
@@ -4121,10 +4083,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // TELEGRAM ATTACHMENT SHEET — Gallery / File / Location / Article / Contact / Music
-  // Matches image 1 (grid of 3x2 with camera overlay on Gallery)
-  // ═══════════════════════════════════════════════════════════════════════
   void _showAttachmentSheet(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -4142,7 +4100,6 @@ class _ChatScreenState extends State<ChatScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Grid row 1 — Gallery + File + Location
               Row(
                 children: [
                   _attachTile(theme, Icons.photo_library_outlined,
@@ -4163,7 +4120,6 @@ class _ChatScreenState extends State<ChatScreen>
                 ],
               ),
               const SizedBox(height: 4),
-              // Grid row 2 — Article + Contact + Music
               Row(
                 children: [
                   _attachTile(theme, Icons.article_outlined, 'Article',
@@ -4220,7 +4176,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ── Gallery picker — shows recent media grid (image 1) ────────────────
   void _showGalleryPicker() {
     showModalBottomSheet(
       context: context,
@@ -4235,7 +4190,6 @@ class _ChatScreenState extends State<ChatScreen>
           top: false,
           child: Column(
             children: [
-              // Header with camera button
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 12),
@@ -4292,7 +4246,6 @@ class _ChatScreenState extends State<ChatScreen>
                   ),
                 ),
               ),
-              // Bottom action bar
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 12),
@@ -4369,9 +4322,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HELPERS
-  // ═══════════════════════════════════════════════════════════════════════
   String _fmtDuration(int s) {
     final m = (s ~/ 60).toString().padLeft(2, '0');
     final sec = (s % 60).toString().padLeft(2, '0');
@@ -4387,181 +4337,6 @@ class _ChatScreenState extends State<ChatScreen>
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MESSAGE OPTIONS OVERLAY — matches image 2 (horizontal reactions + vertical menu)
-// ═══════════════════════════════════════════════════════════════════════════
-class _MessageOptionsOverlay extends StatelessWidget {
-  final Map<String, dynamic> message;
-  final bool isMe;
-  final bool isDeleted;
-  final bool isText;
-  final bool isEdited;
-  final bool canForward;
-  final void Function(String emoji) onReact;
-  final VoidCallback onEdit;
-  final VoidCallback onEditHistory;
-  final VoidCallback onCopy;
-  final VoidCallback onReply;
-  final VoidCallback onForward;
-  final VoidCallback onPin;
-  final VoidCallback onSave;
-  final VoidCallback onDownload;
-  final VoidCallback onSelect;
-  final VoidCallback onReport;
-  final VoidCallback onDeleteEveryone;
-  final VoidCallback onDeleteMe;
-
-  const _MessageOptionsOverlay({
-    required this.message,
-    required this.isMe,
-    required this.isDeleted,
-    required this.isText,
-    required this.isEdited,
-    required this.canForward,
-    required this.onReact,
-    required this.onEdit,
-    required this.onEditHistory,
-    required this.onCopy,
-    required this.onReply,
-    required this.onForward,
-    required this.onPin,
-    required this.onSave,
-    required this.onDownload,
-    required this.onSelect,
-    required this.onReport,
-    required this.onDeleteEveryone,
-    required this.onDeleteMe,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final bg = const Color(0xFF17212B);
-
-    return Material(
-      color: Colors.transparent,
-      child: Stack(
-        children: [
-          // Dim background
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(color: Colors.black.withOpacity(0.4)),
-            ),
-          ),
-
-          // Floating reaction row + menu near center
-          Positioned(
-            left: 16,
-            right: 16,
-            top: size.height * 0.28,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Reaction row
-                if (!isDeleted)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        for (final e
-                            in const ['👍', '❤️', '😂', '😍', '😢', '👆', '😁'])
-                          GestureDetector(
-                            onTap: () => onReact(e),
-                            child: Text(e,
-                                style: const TextStyle(fontSize: 26)),
-                          ),
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: const BoxDecoration(
-                            color: Colors.white24,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.keyboard_arrow_down,
-                              color: Colors.white70, size: 20),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 8),
-
-                // Vertical menu
-                Container(
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isEdited && !isDeleted)
-                        _tile(Icons.access_time, 'edited at ${_timeOf(message)}',
-                            onEditHistory),
-                      _tile(Icons.reply, 'Reply', onReply),
-                      if (isText && !isDeleted)
-                        _tile(Icons.copy, 'Copy', onCopy),
-                      _tile(Icons.label_outline, 'Add to GIFs', () {}),
-                      if (message['media_url'] != null)
-                        _tile(Icons.download_outlined,
-                            'Save to Downloads', onDownload),
-                      _tile(Icons.share, 'Share', () {}),
-                      if (canForward)
-                        _tile(Icons.forward, 'Forward', onForward),
-                      _tile(Icons.push_pin_outlined, 'Pin', onPin),
-                      if (isMe && isText && !isDeleted)
-                        _tile(Icons.edit_outlined, 'Edit', onEdit),
-                      _tile(Icons.delete_outline, 'Delete', () {
-                        if (isMe) {
-                          onDeleteEveryone();
-                        } else {
-                          onDeleteMe();
-                        }
-                      }),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _timeOf(Map<String, dynamic> m) {
-    final t = m['updated_at'];
-    if (t is Timestamp) {
-      final d = t.toDate();
-      return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-    }
-    return '';
-  }
-
-  Widget _tile(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.white70, size: 22),
-            const SizedBox(width: 20),
-            Text(label,
-                style: const TextStyle(color: Colors.white, fontSize: 15)),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -5662,7 +5437,178 @@ class _EmojiOnlyState extends State<_EmojiOnly>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MESSAGE BUBBLE — Telegram style with tail
+// MESSAGE OPTIONS OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+class _MessageOptionsOverlay extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final bool isMe;
+  final bool isDeleted;
+  final bool isText;
+  final bool isEdited;
+  final bool canForward;
+  final void Function(String emoji) onReact;
+  final VoidCallback onEdit;
+  final VoidCallback onEditHistory;
+  final VoidCallback onCopy;
+  final VoidCallback onReply;
+  final VoidCallback onForward;
+  final VoidCallback onPin;
+  final VoidCallback onSave;
+  final VoidCallback onDownload;
+  final VoidCallback onSelect;
+  final VoidCallback onReport;
+  final VoidCallback onDeleteEveryone;
+  final VoidCallback onDeleteMe;
+
+  const _MessageOptionsOverlay({
+    required this.message,
+    required this.isMe,
+    required this.isDeleted,
+    required this.isText,
+    required this.isEdited,
+    required this.canForward,
+    required this.onReact,
+    required this.onEdit,
+    required this.onEditHistory,
+    required this.onCopy,
+    required this.onReply,
+    required this.onForward,
+    required this.onPin,
+    required this.onSave,
+    required this.onDownload,
+    required this.onSelect,
+    required this.onReport,
+    required this.onDeleteEveryone,
+    required this.onDeleteMe,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    const bg = Color(0xFF17212B);
+
+    return Material(
+      color: Colors.transparent,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(color: Colors.black.withOpacity(0.4)),
+            ),
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            top: size.height * 0.28,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!isDeleted)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        for (final e
+                            in const ['👍', '❤️', '😂', '😍', '😢', '👆', '😁'])
+                          GestureDetector(
+                            onTap: () => onReact(e),
+                            child: Text(e,
+                                style: const TextStyle(fontSize: 26)),
+                          ),
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: const BoxDecoration(
+                            color: Colors.white24,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.keyboard_arrow_down,
+                              color: Colors.white70, size: 20),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isEdited && !isDeleted)
+                        _tile(Icons.access_time,
+                            'edited at ${_timeOf(message)}', onEditHistory),
+                      _tile(Icons.reply, 'Reply', onReply),
+                      if (isText && !isDeleted)
+                        _tile(Icons.copy, 'Copy', onCopy),
+                      if (canForward)
+                        _tile(Icons.forward, 'Forward', onForward),
+                      _tile(Icons.push_pin_outlined, 'Pin', onPin),
+                      _tile(Icons.bookmark_outline, 'Save', onSave),
+                      if (message['media_url'] != null)
+                        _tile(Icons.download_outlined,
+                            'Save to Downloads', onDownload),
+                      _tile(Icons.check_circle_outline, 'Select',
+                          onSelect),
+                      if (isMe && isText && !isDeleted)
+                        _tile(Icons.edit_outlined, 'Edit', onEdit),
+                      _tile(Icons.report_outlined, 'Report', onReport),
+                      _tile(Icons.delete_forever_outlined,
+                          'Delete for Everyone', onDeleteEveryone,
+                          color: Colors.redAccent),
+                      _tile(Icons.delete_outline, 'Delete for me',
+                          onDeleteMe,
+                          color: Colors.redAccent),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _timeOf(Map<String, dynamic> m) {
+    final t = m['updated_at'];
+    if (t is Timestamp) {
+      final d = t.toDate();
+      return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    }
+    return '';
+  }
+
+  Widget _tile(IconData icon, String label, VoidCallback onTap,
+      {Color color = Colors.white}) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, color: color.withOpacity(0.75), size: 22),
+            const SizedBox(width: 20),
+            Text(label,
+                style: TextStyle(color: color, fontSize: 15)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGE BUBBLE
 // ═══════════════════════════════════════════════════════════════════════════
 class _MessageBubble extends StatefulWidget {
   final Map<String, dynamic> message;
