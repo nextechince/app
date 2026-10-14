@@ -773,8 +773,8 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     final path =
         '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
-      path: path,
+      path,
+      encoder: AudioEncoder.aacLc,
     );
     if (!mounted) return;
     setState(() {
