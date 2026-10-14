@@ -409,6 +409,9 @@ jobs:
       - name: Generate app icons
         run: flutter pub run flutter_launcher_icons
 
+      - name: Show resolved record version
+        run: flutter pub deps --style=compact | grep record
+    
       - name: Build APK (split per ABI)
         run: flutter build apk --release --split-per-abi
 
