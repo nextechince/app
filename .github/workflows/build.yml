@@ -403,8 +403,8 @@ jobs:
       - name: Create asset directories
         run: mkdir -p assets/images assets/emojis assets/audio
 
-      - name: Get dependencies
-        run: flutter pub get
+      - name: Wipe stale pub cache
+       run: rm -rf ~/.pub-cache/hosted/pub.dev/record* pubspec.lock
 
       - name: Generate app icons
         run: flutter pub run flutter_launcher_icons
