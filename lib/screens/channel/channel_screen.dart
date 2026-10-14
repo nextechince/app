@@ -8,7 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -17,13 +17,39 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:provider/provider.dart';
-import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../services/cloudinary_service.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOCAL NATIVE RECORDER — no external package
+// ═══════════════════════════════════════════════════════════════════════════
+class LocalRecorder {
+  static const _channel = MethodChannel('com.lumachat.app/recorder');
+
+  Future<bool> hasPermission() async => true;
+
+  Future<void> start(String path) async {
+    await _channel.invokeMethod('start', {'path': path});
+  }
+
+  Future<String?> stop() async {
+    return await _channel.invokeMethod<String>('stop');
+  }
+
+  Future<void> cancel() async {
+    await _channel.invokeMethod('cancel');
+  }
+
+  Future<void> dispose() async {
+    try {
+      await _channel.invokeMethod('cancel');
+    } catch (_) {}
+  }
+}
 
 class ChannelChatScreen extends StatefulWidget {
   final String channelId;
@@ -41,9 +67,6 @@ class ChannelChatScreen extends StatefulWidget {
 
 class _ChannelChatScreenState extends State<ChannelChatScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  // ═══════════════════════════════════════════════════════════════════════
-  // CONTROLLERS & SERVICES
-  // ═══════════════════════════════════════════════════════════════════════
   final _messageController = TextEditingController();
   final _editController = TextEditingController();
   final _gifSearchController = TextEditingController();
@@ -51,20 +74,17 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   final _messageFocusNode = FocusNode();
 
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final Record _audioRecorder = Record();
+  final LocalRecorder _audioRecorder = LocalRecorder();
   final ImagePicker _picker = ImagePicker();
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // STATE
-  // ═══════════════════════════════════════════════════════════════════════
   String? _currentUserId;
   String? _myRole = 'member';
-  bool get _isAdmin => _myRole == 'owner' || _myRole == 'admin' || _myRole == 'creator';
+  bool get _isAdmin =>
+      _myRole == 'owner' || _myRole == 'admin' || _myRole == 'creator';
 
   bool _isLoading = false;
   bool _initialized = false;
 
-  // Channel info
   String? _channelAvatarUrl;
   String? _channelDescription;
   String? _channelLink;
@@ -73,12 +93,10 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   int _subscriberCount = 0;
   bool _signaturesEnabled = true;
 
-  // Composer
   bool _silentMode = false;
   DateTime? _scheduledAt;
 
-  // Picker panel
-  String? _panelMode; // null / 'emoji' / 'sticker' / 'gif'
+  String? _panelMode;
   String _pickerTab = 'emoji';
   double _keyboardHeight = 300;
 
@@ -126,20 +144,17 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   };
   String _currentEmojiCategory = 'recent';
 
-  // Stickers
   List<Map<String, dynamic>> _myStickers = [];
   List<Map<String, dynamic>> _favoriteStickers = [];
   List<Map<String, dynamic>> _stickerPacks = [];
   String _currentStickerPackId = 'fav';
   bool _loadingStickers = false;
 
-  // GIFs
   static const String _giphyApiKey = '7tXB3cisPGymcszQX85JFOY6kp3Gz47T';
   List<Map<String, dynamic>> _gifs = [];
   bool _loadingGifs = false;
   bool _gifsLoaded = false;
 
-  // Recording
   bool _isRecording = false;
   bool _isRecordingLocked = false;
   double _recordingSlideOffset = 0;
@@ -150,38 +165,29 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   String? _recordingPath;
   final List<double> _recordingWave = [];
 
-  // Audio playback
   bool _isPlayingAudio = false;
   String? _currentlyPlayingAudioId;
   Duration _audioDuration = Duration.zero;
   Duration _audioPosition = Duration.zero;
 
-  // Media previews
   File? _selectedImage;
   File? _selectedVideo;
 
-  // Video controllers
   final Map<String, VideoPlayerController> _videoControllers = {};
 
-  // Composer state
   String? _editingMessageId;
   String? _replyingTo;
   String? _replyingToContent;
   String? _replyingToSender;
 
-  // Multi-select
   bool _multiSelectMode = false;
   final Set<String> _selectedMessageIds = {};
 
-  // Pinned
   Map<String, dynamic>? _pinnedMessage;
   StreamSubscription<QuerySnapshot>? _pinnedMessageSub;
   StreamSubscription<DocumentSnapshot>? _channelSub;
 
-  // View counter cache (dedupe per session)
   final Set<String> _countedViews = {};
-
-  // User cache
   final Map<String, Map<String, dynamic>> _userCache = {};
 
   Stream<QuerySnapshot> get _messagesStream => FirebaseFirestore.instance
@@ -192,9 +198,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
       .limit(200)
       .snapshots();
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // LIFECYCLE
-  // ═══════════════════════════════════════════════════════════════════════
   @override
   void initState() {
     super.initState();
@@ -230,9 +233,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     if (mounted) setState(() {});
   }
 
-  void _onScroll() {
-    // Optional: show scroll-to-bottom FAB
-  }
+  void _onScroll() {}
 
   void _initAudioPlayer() {
     _audioPlayer.durationStream.listen((d) {
@@ -284,9 +285,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     super.dispose();
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // CHANNEL INFO
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadChannelInfo() async {
     final doc = await FirebaseFirestore.instance
         .collection('chats')
@@ -371,9 +369,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // USER CACHE + VIEW COUNT
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _incrementViewCount(String messageId) async {
     if (_currentUserId == null) return;
     final key = '${_currentUserId}_$messageId';
@@ -408,9 +403,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     } catch (_) {}
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // SEND
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _sendMessage({
     String? text,
     String? mediaUrl,
@@ -702,9 +694,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MEDIA PICKERS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _pickImage() async {
     final picked = await _picker.pickImage(
         source: ImageSource.gallery, imageQuality: 80);
@@ -714,14 +703,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   Future<void> _pickMultiImages() async {
     final xs = await _picker.pickMultiImage(imageQuality: 85);
     if (xs.isEmpty) return;
-    if (xs.length == 1) {
-      setState(() => _selectedImage = File(xs.first.path));
-      return;
-    }
-    // Multi-image → treat first as preview, rest uploaded as album inline
     setState(() => _selectedImage = File(xs.first.path));
-    // (uploads sequentially in _sendMessage would need a list — keep single for now,
-    // still uploads first image; extend by storing xs list separately if desired)
   }
 
   Future<void> _takePhoto() async {
@@ -761,7 +743,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // VOICE RECORDING
+  // VOICE RECORDING — uses native MediaRecorder
   // ═══════════════════════════════════════════════════════════════════════
   Future<void> _startRecording() async {
     final hasPermission = await _audioRecorder.hasPermission();
@@ -772,10 +754,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     final dir = await getTemporaryDirectory();
     final path =
         '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await _audioRecorder.start(
-      path,
-      encoder: AudioEncoder.aacLc,
-    );
+    await _audioRecorder.start(path);
     if (!mounted) return;
     setState(() {
       _isRecording = true;
@@ -808,6 +787,18 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   Future<void> _stopRecording({bool send = true}) async {
     _recordingTimer?.cancel();
     _recordingSecondsTimer?.cancel();
+
+    if (!send) {
+      await _audioRecorder.cancel();
+      if (!mounted) return;
+      setState(() {
+        _isRecording = false;
+        _isRecordingLocked = false;
+        _recordingSlideOffset = 0;
+      });
+      return;
+    }
+
     final path = await _audioRecorder.stop();
     if (!mounted) return;
     setState(() {
@@ -815,13 +806,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
       _isRecordingLocked = false;
       _recordingSlideOffset = 0;
     });
-    if (!send || path == null) {
-      if (path != null) {
-        final f = File(path);
-        if (await f.exists()) await f.delete();
-      }
-      return;
-    }
+    if (path == null) return;
     final file = File(path);
     final size = await file.length();
     if (size < 1000) {
@@ -884,9 +869,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // STICKERS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadStickers() async {
     if (_currentUserId == null || _loadingStickers) return;
     setState(() => _loadingStickers = true);
@@ -1062,9 +1044,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HELPERS
-  // ═══════════════════════════════════════════════════════════════════════
   String _formatFileSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) {
@@ -1125,9 +1104,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
         .showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGE OPTIONS
-  // ═══════════════════════════════════════════════════════════════════════
   void _showMessageOptions(Map<String, dynamic> msg, bool isMe) {
     final isDeleted = msg['deleted_for_everyone'] == true;
     final messageId = msg['id'] as String?;
@@ -1220,8 +1196,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
   }
 
   Future<void> _showReactionsDetail(Map<String, dynamic> msg) async {
-    final reactions =
-        Map<String, dynamic>.from(msg['reactions'] ?? {});
+    final reactions = Map<String, dynamic>.from(msg['reactions'] ?? {});
     if (reactions.isEmpty) return;
     final entries = reactions.entries.toList();
     showModalBottomSheet(
@@ -1526,7 +1501,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // Multi-select
   void _enterMultiSelect(String id) {
     setState(() {
       _multiSelectMode = true;
@@ -1553,9 +1527,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PICKER PANEL
-  // ═══════════════════════════════════════════════════════════════════════
   void _togglePanel(String mode) {
     final wasOpen = _panelMode == mode;
     setState(() {
@@ -1980,9 +1951,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // STICKER OPTIONS / CREATOR
-  // ═══════════════════════════════════════════════════════════════════════
   void _showStickerOptions(Map<String, dynamic> s, bool isMine) {
     final theme = Theme.of(context);
     showModalBottomSheet(
@@ -2026,15 +1994,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
               onTap: () {
                 Navigator.pop(context);
                 _toggleFavoriteSticker(s);
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.copy, color: theme.colorScheme.primary),
-              title: const Text('Copy link'),
-              onTap: () {
-                Navigator.pop(context);
-                Clipboard.setData(
-                    ClipboardData(text: s['url'] as String));
               },
             ),
             if (isMine)
@@ -2101,9 +2060,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // ATTACHMENT SHEET
-  // ═══════════════════════════════════════════════════════════════════════
   void _showAttachmentSheet() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -2135,7 +2091,10 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                   _attachTile(theme, Icons.location_on_outlined,
                       'Location', () {
                     Navigator.pop(context);
-                    _showLocationSheet();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Location sharing coming soon')),
+                    );
                   }),
                 ],
               ),
@@ -2307,44 +2266,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  void _showLocationSheet() {
-    final theme = Theme.of(context);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: theme.brightness == Brightness.dark
-          ? const Color(0xFF1F1F1F)
-          : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            ListTile(
-              leading: Icon(Icons.my_location,
-                  color: theme.colorScheme.primary),
-              title: const Text('Send current location'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Location sharing coming soon')),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // POLL COMPOSER
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _createPoll() async {
     final questionCtrl = TextEditingController();
     final optionCtrls = <TextEditingController>[
@@ -2437,9 +2358,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // COMPOSER ACTIONS
-  // ═══════════════════════════════════════════════════════════════════════
   void _openSearch() {
     showSearch(
       context: context,
@@ -2572,12 +2490,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                 );
               },
             ),
-            ListTile(
-              leading:
-                  Icon(Icons.share, color: theme.colorScheme.primary),
-              title: const Text('Share channel'),
-              onTap: () => Navigator.pop(context),
-            ),
             if (_isAdmin)
               ListTile(
                 leading: Icon(
@@ -2599,9 +2511,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // BUILD
-  // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2675,9 +2584,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HEADER
-  // ═══════════════════════════════════════════════════════════════════════
   PreferredSizeWidget _buildChannelHeader(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final Color headerBg = _isPublicChannel
@@ -2800,9 +2706,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PINNED BANNER
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildPinnedBanner(ThemeData theme) {
     final text = _pinnedMessage!['text'] ??
         _pinnedMessage!['content'] ??
@@ -2859,9 +2762,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MULTI SELECT BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildMultiSelectBar(ThemeData theme) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2906,9 +2806,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // POST LIST
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildPostList(
       ThemeData theme, List<QueryDocumentSnapshot> messages) {
     return ListView.builder(
@@ -2919,15 +2816,14 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
       itemBuilder: (context, index) {
         final msg = messages[index].data() as Map<String, dynamic>;
         msg['id'] = messages[index].id;
-        if (msg['sender_id'] != null && !_userCache.containsKey(msg['sender_id'])) {
+        if (msg['sender_id'] != null &&
+            !_userCache.containsKey(msg['sender_id'])) {
           _fetchUser(msg['sender_id']).then((_) {
             if (mounted) setState(() {});
           });
         }
-        // Increment view count once
         _incrementViewCount(messages[index].id);
 
-        // Date divider
         final next = index < messages.length - 1
             ? messages[index + 1].data() as Map<String, dynamic>
             : null;
@@ -3008,9 +2904,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // REPLY BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildReplyBar(ThemeData theme) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -3111,9 +3004,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // RECORDING BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildRecordingBar(ThemeData theme) {
     const slideThreshold = -80.0;
     final slidingToCancel = _recordingSlideOffset < slideThreshold;
@@ -3200,11 +3090,10 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // COMPOSER
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildComposer(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
+    final hasText = _messageController.text.trim().isNotEmpty;
+
     return Container(
       color: isDark ? const Color(0xFF17212B) : Colors.white,
       padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
@@ -3213,7 +3102,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Silent / schedule chips
             if (_silentMode || _scheduledAt != null)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -3237,7 +3125,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Attach
                 GestureDetector(
                   onTap: _showAttachmentSheet,
                   child: Container(
@@ -3250,7 +3137,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                             .withOpacity(0.6)),
                   ),
                 ),
-                // Silent toggle
                 GestureDetector(
                   onTap: _pickSilentToggle,
                   child: Container(
@@ -3269,7 +3155,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                     ),
                   ),
                 ),
-                // Schedule toggle
                 GestureDetector(
                   onTap: _pickScheduleTime,
                   child: Container(
@@ -3287,7 +3172,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                   ),
                 ),
 
-                // GIF chip
                 GestureDetector(
                   onTap: () => _togglePanel('gif'),
                   child: Container(
@@ -3312,7 +3196,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                   ),
                 ),
 
-                // Field
                 Expanded(
                   child: Container(
                     constraints:
@@ -3355,7 +3238,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                 ),
                 const SizedBox(width: 4),
 
-                // Emoji
                 GestureDetector(
                   onTap: () => _togglePanel('emoji'),
                   child: Container(
@@ -3375,32 +3257,35 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                   ),
                 ),
 
-                // Send / Mic
                 GestureDetector(
-                  onLongPressStart: (d) {
-                    _recordingDragStartX = d.globalPosition.dx;
-                    _startRecording();
-                  },
-                  onLongPressMoveUpdate: (d) {
-                    final start = _recordingDragStartX;
-                    if (start == null) return;
-                    setState(() {
-                      _recordingSlideOffset =
-                          d.globalPosition.dx - start;
-                    });
-                  },
-                  onLongPressEnd: (_) {
-                    final cancelled = _recordingSlideOffset < -80;
-                    _recordingDragStartX = null;
-                    _stopRecording(send: !cancelled);
-                  },
+                  onLongPressStart: hasText
+                      ? null
+                      : (d) {
+                          _recordingDragStartX = d.globalPosition.dx;
+                          _startRecording();
+                        },
+                  onLongPressMoveUpdate: hasText
+                      ? null
+                      : (d) {
+                          final start = _recordingDragStartX;
+                          if (start == null) return;
+                          setState(() {
+                            _recordingSlideOffset =
+                                d.globalPosition.dx - start;
+                          });
+                        },
+                  onLongPressEnd: hasText
+                      ? null
+                      : (_) {
+                          final cancelled = _recordingSlideOffset < -80;
+                          _recordingDragStartX = null;
+                          _stopRecording(send: !cancelled);
+                        },
                   onTap: _isLoading
                       ? null
                       : () {
-                          if (_messageController.text.trim().isNotEmpty) {
+                          if (hasText) {
                             _sendMessage();
-                          } else {
-                            _showAttachmentSheet();
                           }
                         },
                   child: Container(
@@ -3419,9 +3304,7 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
                             ),
                           )
                         : Icon(
-                            _messageController.text.trim().isNotEmpty
-                                ? Icons.send
-                                : Icons.mic,
+                            hasText ? Icons.send : Icons.mic,
                             color: Colors.white,
                             size: 22,
                           ),
@@ -3480,9 +3363,6 @@ class _ChannelChatScreenState extends State<ChannelChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // IMAGE VIEWER
-  // ═══════════════════════════════════════════════════════════════════════
   void _showImageViewer(String imageUrl) {
     showDialog(
       context: context,
@@ -3635,7 +3515,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Silent / scheduled
                       if (m['is_silent'] == true)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
@@ -3673,7 +3552,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                           ),
                         ),
 
-                      // Reply preview
                       if (m['reply_to'] != null)
                         Container(
                           margin: const EdgeInsets.only(bottom: 8),
@@ -3716,7 +3594,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                           ),
                         ),
 
-                      // Content
                       if (isDeleted)
                         Text(
                           'This message was deleted',
@@ -3753,7 +3630,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                           ),
                         ),
 
-                      // Reactions pill
                       if (reactions.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
@@ -3787,7 +3663,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                   ),
                 ),
 
-                // Footer row: views | discuss | share
                 Padding(
                   padding:
                       const EdgeInsets.only(top: 4, left: 4, right: 4),
@@ -3843,7 +3718,6 @@ class _ChannelPostBubbleState extends State<_ChannelPostBubble> {
                   ),
                 ),
 
-                // Signature row: time + channel name + admin avatar
                 Padding(
                   padding:
                       const EdgeInsets.only(top: 2, left: 4, right: 4),
