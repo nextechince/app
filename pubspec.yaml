@@ -61,6 +61,7 @@ dependencies:
   path: ^1.8.3
   url_launcher: ^6.2.5
   flutter_slidable: ^3.1.0
+  photo_manager: ^3.6.0
   # Calls
   agora_rtc_engine: ^6.3.0
   permission_handler: ^11.3.0
