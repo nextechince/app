@@ -126,7 +126,7 @@ jobs:
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
               id "com.android.application" version "7.4.2" apply false
-              id "org.jetbrains.kotlin.android" version "1.8.22" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.10" apply false
               id "com.google.gms.google-services" version "4.3.15" apply false
           }
 
@@ -251,8 +251,8 @@ jobs:
                       } else {
                           signingConfig signingConfigs.debug
                       }
-                      minifyEnabled true
-                      shrinkResources true
+                      minifyEnabled false
+                      shrinkResources false
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
               }
@@ -269,13 +269,135 @@ jobs:
               f.write(content)
           PYEOF
 
-      - name: Force MainActivity path
+      # ═══════════════════════════════════════════════════════════════════════
+      # STEP 5 — MainActivity with native voice recorder (no `record` package)
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Force MainActivity with native recorder
         run: |
           mkdir -p android/app/src/main/kotlin/com/lumachat/app
           cat > android/app/src/main/kotlin/com/lumachat/app/MainActivity.kt << 'EOF'
           package com.lumachat.app
+
+          import android.media.MediaRecorder
+          import android.os.Build
           import io.flutter.embedding.android.FlutterFragmentActivity
-          class MainActivity: FlutterFragmentActivity() {}
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          import java.io.File
+
+          class MainActivity : FlutterFragmentActivity() {
+
+              private val CHANNEL = "com.lumachat.app/recorder"
+              private var recorder: MediaRecorder? = null
+              private var currentPath: String? = null
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "start" -> {
+                                  val path = call.argument<String>("path")
+                                  if (path == null) {
+                                      result.error("NO_PATH", "path is null", null)
+                                      return@setMethodCallHandler
+                                  }
+                                  try {
+                                      startRecording(path)
+                                      result.success(true)
+                                  } catch (e: Exception) {
+                                      result.error("START_FAILED", e.message, null)
+                                  }
+                              }
+                              "stop" -> {
+                                  try {
+                                      val path = stopRecording()
+                                      result.success(path)
+                                  } catch (e: Exception) {
+                                      result.error("STOP_FAILED", e.message, null)
+                                  }
+                              }
+                              "cancel" -> {
+                                  try {
+                                      cancelRecording()
+                                      result.success(true)
+                                  } catch (e: Exception) {
+                                      result.error("CANCEL_FAILED", e.message, null)
+                                  }
+                              }
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+
+              private fun startRecording(path: String) {
+                  try {
+                      recorder?.release()
+                  } catch (_: Exception) {}
+                  recorder = null
+
+                  val file = File(path)
+                  file.parentFile?.mkdirs()
+
+                  recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      MediaRecorder(this)
+                  } else {
+                      @Suppress("DEPRECATION")
+                      MediaRecorder()
+                  }.apply {
+                      setAudioSource(MediaRecorder.AudioSource.MIC)
+                      setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                      setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                      setAudioEncodingBitRate(128000)
+                      setAudioSamplingRate(44100)
+                      setOutputFile(path)
+                      prepare()
+                      start()
+                  }
+                  currentPath = path
+              }
+
+              private fun stopRecording(): String? {
+                  val path = currentPath
+                  try {
+                      recorder?.stop()
+                  } catch (_: Exception) {
+                  } finally {
+                      try {
+                          recorder?.release()
+                      } catch (_: Exception) {}
+                      recorder = null
+                      currentPath = null
+                  }
+                  return path
+              }
+
+              private fun cancelRecording() {
+                  try {
+                      recorder?.stop()
+                  } catch (_: Exception) {
+                  } finally {
+                      try {
+                          recorder?.release()
+                      } catch (_: Exception) {}
+                      recorder = null
+                  }
+                  currentPath?.let {
+                      val f = File(it)
+                      if (f.exists()) f.delete()
+                  }
+                  currentPath = null
+              }
+
+              override fun onDestroy() {
+                  try {
+                      recorder?.release()
+                  } catch (_: Exception) {}
+                  recorder = null
+                  super.onDestroy()
+              }
+          }
           EOF
 
       - name: Create ProGuard rules
@@ -300,8 +422,24 @@ jobs:
           -keepclassmembers class * {
               @com.google.gson.annotations.SerializedName <fields>;
           }
+
+          # ── photo_manager + exifinterface R8 fix ──
+          -keep class androidx.exifinterface.** { *; }
+          -dontwarn androidx.exifinterface.**
+          -keep class com.fluttercandies.photo_manager.** { *; }
+          -dontwarn com.fluttercandies.photo_manager.**
+
+          # ── Kotlin stdlib fix ──
+          -dontwarn kotlin.**
+          -dontwarn kotlinx.**
+          -keep class kotlin.** { *; }
+          -keep class kotlinx.** { *; }
+
           -keepattributes SourceFile,LineNumberTable
           -renamesourcefileattribute SourceFile
+
+          -keep,allowobfuscation,allowshrinking class androidx.exifinterface.media.ExifInterface
+          -keep,allowobfuscation,allowshrinking class androidx.exifinterface.media.ExifInterface$*
           EOF
 
       - name: Create AndroidManifest.xml
@@ -328,6 +466,9 @@ jobs:
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
               <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+              <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32" />
 
               <application
                   android:label="Luma Chat"
@@ -338,7 +479,8 @@ jobs:
                   android:fullBackupContent="true"
                   android:largeHeap="true"
                   android:hardwareAccelerated="true"
-                  android:extractNativeLibs="true">
+                  android:extractNativeLibs="true"
+                  android:requestLegacyExternalStorage="true">
 
                   <activity
                       android:name=".MainActivity"
@@ -398,18 +540,10 @@ jobs:
         run: mkdir -p assets/images assets/emojis assets/audio
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 5 — Wipe stale pub cache + fetch dependencies
+      # STEP 6 — Fetch dependencies and build
       # ═══════════════════════════════════════════════════════════════════════
-      - name: Wipe stale pub cache
-        run: |
-          rm -rf ~/.pub-cache/hosted/pub.dev/record*
-          rm -f pubspec.lock
-
       - name: Flutter pub get
         run: flutter pub get
-
-      - name: Show resolved record version
-        run: flutter pub deps --style=compact | grep record || true
 
       - name: Generate app icons
         run: flutter pub run flutter_launcher_icons
