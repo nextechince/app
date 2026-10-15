@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +17,7 @@ import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -31,7 +32,7 @@ import '../../services/invitation_service.dart';
 import '../calls/call_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LOCAL NATIVE RECORDER — no external package
+// LOCAL NATIVE RECORDER
 // ═══════════════════════════════════════════════════════════════════════════
 class LocalRecorder {
   static const _channel = MethodChannel('com.lumachat.app/recorder');
@@ -141,6 +142,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _multiSelectMode = false;
   final Set<String> _selectedMessageIds = {};
 
+  /// Panel mode: null | 'emoji' | 'sticker' | 'gif'
   String? _panelMode;
   String _pickerTab = 'emoji';
   double _keyboardHeight = 300;
@@ -150,43 +152,85 @@ class _ChatScreenState extends State<ChatScreen>
   static const Map<String, Map<String, dynamic>> _emojiCategories = {
     'recent': {
       'icon': '🕐',
-      'emojis': ['👍','❤️','😂','🔥','😍','🥰','😎','🙏','💯','🎉','😭','🤣','👏','💪','✨'],
+      'emojis': [
+        '👍','❤️','😂','🔥','😍','🥰','😎','🙏','💯','🎉','😭','🤣','👏','💪','✨'
+      ],
     },
     'smileys': {
       'icon': '😀',
-      'emojis': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','😵','🤯','🤠','🥳','😎','🤓','🧐'],
+      'emojis': [
+        '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰',
+        '😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤑','🤗','🤭',
+        '🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔',
+        '😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','😵','🤯','🤠',
+        '🥳','😎','🤓','🧐'
+      ],
     },
     'love': {
       'icon': '❤️',
-      'emojis': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💋','🌹','🌷','🌺','🌸','💐','💌'],
+      'emojis': [
+        '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓',
+        '💗','💖','💘','💝','💟','♥️','💋','🌹','🌷','🌺','🌸','💐','💌'
+      ],
     },
     'gestures': {
       'icon': '👍',
-      'emojis': ['👍','👎','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','🤲','🤝','🙏','✍️','💪','👂','👃','👀','👁️','👅','👄'],
+      'emojis': [
+        '👍','👎','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇',
+        '☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','🤲','🤝','🙏','✍️','💪','👂',
+        '👃','👀','👁️','👅','👄'
+      ],
     },
     'animals': {
       'icon': '🐶',
-      'emojis': ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🐤','🦆','🦅','🦉','🦇','🐺','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🐢','🐍','🐙','🐬','🐳','🦈','🐊','🐘'],
+      'emojis': [
+        '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸',
+        '🐵','🐔','🐧','🐦','🐤','🦆','🦅','🦉','🦇','🐺','🐴','🦄','🐝','🐛',
+        '🦋','🐌','🐞','🐜','🐢','🐍','🐙','🐬','🐳','🦈','🐊','🐘'
+      ],
     },
     'food': {
       'icon': '🍔',
-      'emojis': ['🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🌽','🥕','🥔','🍞','🥖','🧀','🥚','🍳','🥓','🥩','🍗','🍔','🍟','🍕','🌮','🍝','🍜','🍣','🍱','🍚','🍙','🍢','🍡','🍦','🍰','🎂'],
+      'emojis': [
+        '🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭',
+        '🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🌽','🥕','🥔','🍞',
+        '🥖','🧀','🥚','🍳','🥓','🥩','🍗','🍔','🍟','🍕','🌮','🍝','🍜','🍣',
+        '🍱','🍚','🍙','🍢','🍡','🍦','🍰','🎂'
+      ],
     },
     'activities': {
       'icon': '⚽',
-      'emojis': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🎱','🏓','🏸','🏒','🥅','⛳','🏹','🎣','🥊','🥋','🛹','🛼','🛷','⛸️','🎿','⛷️','🏂','🏋️','🤼','🤸','⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅'],
+      'emojis': [
+        '⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🎱','🏓','🏸','🏒','🥅','⛳',
+        '🏹','🎣','🥊','🥋','🛹','🛼','🛷','⛸️','🎿','⛷️','🏂','🏋️','🤼','🤸',
+        '⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🚣','🧗','🚵','🚴','🏆','🥇',
+        '🥈','🥉','🏅'
+      ],
     },
     'travel': {
       'icon': '✈️',
-      'emojis': ['🚗','🚕','🚙','🚌','🏎️','🚓','🚑','🚒','🚐','🚚','🚛','🚜','🛴','🚲','🛵','🏍️','🚨','🚔','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🚀','🛸','🚁','⛵','🚤','🛳️','⛴️','🚢','⚓'],
+      'emojis': [
+        '🚗','🚕','🚙','🚌','🏎️','🚓','🚑','🚒','🚐','🚚','🚛','🚜','🛴','🚲',
+        '🛵','🏍️','🚨','🚔','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇',
+        '🚊','🚉','✈️','🛫','🛬','🚀','🛸','🚁','⛵','🚤','🛳️','⛴️','🚢','⚓'
+      ],
     },
     'objects': {
       'icon': '💡',
-      'emojis': ['⌚','📱','💻','⌨️','🖥️','🖨️','🖱️','🕹️','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽️','📞','☎️','📟','📠','📺','📻','🎙️','🧭','⏱️','⏰','🕰️','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯️','💸','💵','💰','💳','💎','🔧','🔨','⚙️'],
+      'emojis': [
+        '⌚','📱','💻','⌨️','🖥️','🖨️','🖱️','🕹️','💽','💾','💿','📀','📼','📷',
+        '📸','📹','🎥','📽️','📞','☎️','📟','📠','📺','📻','🎙️','🧭','⏱️','⏰',
+        '🕰️','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯️','💸','💵','💰','💳','💎',
+        '🔧','🔨','⚙️'
+      ],
     },
     'symbols': {
       'icon': '💯',
-      'emojis': ['✅','❌','❎','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','🟤','🔺','🔻','🔸','🔹','🔶','🔷','🔳','🔲','▪️','▫️','◾','◽','◼️','◻️','🔈','🔇','🔉','🔊','🔔','🔕','📣','📢','💬','💭','💯','🔢','🔤'],
+      'emojis': [
+        '✅','❌','❎','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪',
+        '🟤','🔺','🔻','🔸','🔹','🔶','🔷','🔳','🔲','▪️','▫️','◾','◽','◼️',
+        '◻️','🔈','🔇','🔉','🔊','🔔','🔕','📣','📢','💬','💭','💯','🔢','🔤'
+      ],
     }
   };
   String _currentEmojiCategory = 'recent';
@@ -228,7 +272,6 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _isSearching = false;
   List<Map<String, dynamic>> _searchResults = [];
-  int _currentSearchIndex = -1;
 
   List<Map<String, dynamic>> _pinnedMessages = [];
   String? _pinnedMessageId;
@@ -247,6 +290,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onFocusChange() {
+    // If the user taps the field, hide the panel and let the keyboard show
     if (_messageFocusNode.hasFocus && _panelMode != null) {
       setState(() => _panelMode = null);
     }
@@ -261,6 +305,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onTextChanged() {
+    if (mounted) setState(() {});
     _startTyping();
   }
 
@@ -312,6 +357,9 @@ class _ChatScreenState extends State<ChatScreen>
     _loadWallpaper();
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // WALLPAPER
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadWallpaper() async {
     if (_currentUserId == null) return;
     _wallpaperSub?.cancel();
@@ -333,6 +381,9 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHAT INFO + SUBSCRIPTIONS
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadChatInfoAndStart() async {
     try {
       final doc = await FirebaseFirestore.instance
@@ -424,8 +475,7 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() {
         _otherProfilePhotoVisible =
             d['profile_photo_visible'] as bool? ?? true;
-        _otherLastSeenVisible =
-            d['last_seen_visible'] as bool? ?? true;
+        _otherLastSeenVisible = d['last_seen_visible'] as bool? ?? true;
         _otherVoiceVideoCallsVisible =
             d['voice_video_calls_visible'] as bool? ?? true;
       });
@@ -615,6 +665,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOAD MESSAGES
+  // ═══════════════════════════════════════════════════════════════════════
   List<Map<String, dynamic>> _filterDocs(
       Iterable<QueryDocumentSnapshot> docs) {
     final loaded = <Map<String, dynamic>>[];
@@ -1131,7 +1184,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // VOICE RECORDING — uses native MediaRecorder via MethodChannel
+  // VOICE RECORDING
   // ═══════════════════════════════════════════════════════════════════════
   Future<void> _startRecordingTelegram() async {
     try {
@@ -1242,54 +1295,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<void> _pickMultipleImages() async {
-    if (!_canSendFiles) return;
-    final xs = await _picker.pickMultiImage(imageQuality: 85);
-    if (xs.isEmpty) return;
-    if (xs.length == 1) {
-      await _uploadAndSendMedia(
-          file: File(xs.first.path), type: 'image', fileName: 'Photo');
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Row(children: [
-        SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2)),
-        SizedBox(width: 12),
-        Text('Uploading...'),
-      ]),
-      duration: Duration(seconds: 60),
-    ));
-    try {
-      final uploaded = <Map<String, dynamic>>[];
-      for (final x in xs) {
-        final url = await CloudinaryService.uploadImage(
-            File(x.path), 'luma/chats/$_chatId');
-        if (url != null) uploaded.add({'url': url});
-      }
-      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      if (uploaded.isEmpty) return;
-      if (uploaded.length == 1) {
-        await _sendMessage(
-            type: 'image',
-            content: 'Photo',
-            mediaUrl: uploaded.first['url'],
-            fileName: 'Photo');
-      } else {
-        await _sendMessage(
-          type: 'image',
-          content: 'Album',
-          mediaUrl: uploaded.first['url'],
-          images: uploaded,
-        );
-      }
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    }
-  }
-
   Future<void> _takePhoto() async {
     if (!_canSendFiles) return;
     final x = await _picker.pickImage(source: ImageSource.camera);
@@ -1337,6 +1342,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Uploads a picked asset file (from photo_manager or image_picker)
   Future<void> _uploadAndSendMedia({
     required File file,
     required String type,
@@ -1346,6 +1352,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool viewOnce = false,
   }) async {
     if (_currentUserId == null || _chatId == null) return;
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Row(children: [
         SizedBox(
@@ -2474,10 +2481,14 @@ class _ChatScreenState extends State<ChatScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    if (bottomInset > 0) _keyboardHeight = bottomInset;
+    final panelOpen = _panelMode != null;
+    if (bottomInset > 0 && !panelOpen) {
+      _keyboardHeight = bottomInset;
+    }
 
     return Scaffold(
-      resizeToAvoidBottomInset: true,
+      // When panel is open, don't resize — panel sits where keyboard would
+      resizeToAvoidBottomInset: !panelOpen,
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: _isSearching ? _buildSearchAppBar(theme) : _buildHeader(theme),
       body: Stack(
@@ -2504,7 +2515,7 @@ class _ChatScreenState extends State<ChatScreen>
               if (_replyingTo != null) _buildReplyBar(theme),
               if (_multiSelectMode) _buildMultiSelectBar(theme),
               if (_isRecording) _buildRecordingBar(theme),
-              if (_panelMode != null)
+              if (panelOpen)
                 SizedBox(
                   height: _keyboardHeight > 0 ? _keyboardHeight : 300,
                   child: _buildPickerPanel(theme),
@@ -2545,6 +2556,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // HEADER
+  // ═══════════════════════════════════════════════════════════════════════
   PreferredSizeWidget _buildHeader(ThemeData theme) {
     final displayName = _otherUserNickname ?? _chatName ?? 'Chat';
     final verified = _userCache[_otherUserId]?['is_verified'] == true;
@@ -2718,8 +2732,12 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                   ),
                 ),
-                _headerCircle(theme, icon: Icons.call, onTap: () => _startCall(false)),
-                _headerCircle(theme, icon: Icons.more_vert, onTap: _showMoreMenu),
+                _headerCircle(
+                    theme, icon: Icons.call, onTap: () => _startCall(false)),
+                _headerCircle(
+                    theme, icon: Icons.videocam, onTap: () => _startCall(true)),
+                _headerCircle(
+                    theme, icon: Icons.more_vert, onTap: _showMoreMenu),
                 const SizedBox(width: 4),
               ],
             ),
@@ -2783,7 +2801,6 @@ class _ChatScreenState extends State<ChatScreen>
                     .toLowerCase()
                     .contains(lower))
                 .toList();
-            _currentSearchIndex = _searchResults.isEmpty ? -1 : 0;
           });
         },
       ),
@@ -2869,20 +2886,12 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // BANNERS
+  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildPinnedBanner(ThemeData theme) {
     return GestureDetector(
-      onTap: () {
-        final first = _pinnedMessages.first;
-        final idx = _messages
-            .indexWhere((m) => m['id'] == first['message_id']);
-        if (idx >= 0 && _scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent - (idx * 80.0),
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeInOut,
-          );
-        }
-      },
+      onTap: () {},
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
         color: theme.colorScheme.primary.withOpacity(0.08),
@@ -2999,6 +3008,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // MESSAGE LIST
+  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildMessageList(ThemeData theme) {
     final list = _messages.reversed.toList();
     return ListView.builder(
@@ -3297,6 +3309,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // RECORDING BAR
+  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildRecordingBar(ThemeData theme) {
     const slideThreshold = -80.0;
     final slidingToCancel = _recordingSlideOffset < slideThreshold;
@@ -3353,8 +3368,8 @@ class _ChatScreenState extends State<ChatScreen>
                 : Row(
                     children: _recordingWave
                         .map((h) => Container(
-                              margin: const EdgeInsets.symmetric(
-                                  horizontal: 1),
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 1),
                               width: 3,
                               height: 4 + h * 18,
                               decoration: BoxDecoration(
@@ -3382,12 +3397,16 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // INPUT BAR — [emoji] [GIF] [field] [attach] [mic/send]
+  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildInputBar(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final disabled = !_canSend ||
         _isAnnouncementsOnly ||
         (_isBlocked && !_isGroup);
     final bg = isDark ? const Color(0xFF17212B) : const Color(0xFFF0F0F0);
+    final hasText = _messageController.text.trim().isNotEmpty;
 
     return Container(
       color: bg,
@@ -3397,45 +3416,48 @@ class _ChatScreenState extends State<ChatScreen>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: GestureDetector(
-                onTap: disabled
-                    ? null
-                    : () {
-                        setState(() {
-                          _panelMode = _panelMode == 'gif' ? null : 'gif';
-                          _pickerTab = 'gif';
-                        });
-                        if (_panelMode == 'gif') {
-                          _messageFocusNode.unfocus();
-                          if (!_gifsLoaded) _loadGifs();
-                        } else {
-                          _messageFocusNode.requestFocus();
-                        }
-                      },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: const Color(0xFF3390EC),
-                      width: 1.5,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
+            // Emoji button (opens picker panel)
+            _inputCircleButton(
+              theme,
+              icon: _panelMode == 'emoji'
+                  ? Icons.keyboard
+                  : Icons.emoji_emotions_outlined,
+              active: _panelMode == 'emoji',
+              onTap: disabled ? null : () => _togglePanel('emoji'),
+            ),
+            const SizedBox(width: 2),
+
+            // GIF chip
+            GestureDetector(
+              onTap: disabled ? null : () => _togglePanel('gif'),
+              child: Container(
+                margin: const EdgeInsets.only(right: 6, bottom: 4),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: _panelMode == 'gif'
+                        ? const Color(0xFF3390EC)
+                        : const Color(0xFF3390EC).withOpacity(0.7),
+                    width: 1.5,
                   ),
-                  child: const Text(
-                    'GIF',
-                    style: TextStyle(
-                      color: Color(0xFF3390EC),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  borderRadius: BorderRadius.circular(20),
+                  color: _panelMode == 'gif'
+                      ? const Color(0xFF3390EC).withOpacity(0.12)
+                      : null,
+                ),
+                child: const Text(
+                  'GIF',
+                  style: TextStyle(
+                    color: Color(0xFF3390EC),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
             ),
 
+            // Message field
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 140),
@@ -3478,51 +3500,39 @@ class _ChatScreenState extends State<ChatScreen>
             ),
             const SizedBox(width: 6),
 
-            GestureDetector(
+            // Attach
+            _inputCircleButton(
+              theme,
+              icon: Icons.attach_file,
               onTap: disabled ? null : () => _showAttachmentSheet(context),
-              child: Container(
-                width: 44,
-                height: 44,
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.attach_file,
-                  size: 24,
-                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                ),
-              ),
             ),
 
+            // Mic / Send (long press to record when empty)
             GestureDetector(
-              onLongPressStart:
-                  (disabled || _messageController.text.trim().isNotEmpty)
-                      ? null
-                      : (d) {
-                          _recordingDragStartX = d.globalPosition.dx;
-                          _startRecordingTelegram();
-                        },
-              onLongPressMoveUpdate:
-                  (disabled || _messageController.text.trim().isNotEmpty)
-                      ? null
-                      : (d) {
-                          final start = _recordingDragStartX;
-                          if (start == null) return;
-                          setState(() {
-                            _recordingSlideOffset =
-                                d.globalPosition.dx - start;
-                          });
-                        },
-              onLongPressEnd:
-                  (disabled || _messageController.text.trim().isNotEmpty)
-                      ? null
-                      : (_) {
-                          final cancelled = _recordingSlideOffset < -80;
-                          _recordingDragStartX = null;
-                          _stopRecordingTelegram(send: !cancelled);
-                        },
-              onTap:
-                  (_messageController.text.trim().isNotEmpty && !disabled)
-                      ? _sendTextMessage
-                      : null,
+              onLongPressStart: (disabled || hasText)
+                  ? null
+                  : (d) {
+                      _recordingDragStartX = d.globalPosition.dx;
+                      _startRecordingTelegram();
+                    },
+              onLongPressMoveUpdate: (disabled || hasText)
+                  ? null
+                  : (d) {
+                      final start = _recordingDragStartX;
+                      if (start == null) return;
+                      setState(() {
+                        _recordingSlideOffset =
+                            d.globalPosition.dx - start;
+                      });
+                    },
+              onLongPressEnd: (disabled || hasText)
+                  ? null
+                  : (_) {
+                      final cancelled = _recordingSlideOffset < -80;
+                      _recordingDragStartX = null;
+                      _stopRecordingTelegram(send: !cancelled);
+                    },
+              onTap: hasText && !disabled ? _sendTextMessage : null,
               child: Container(
                 width: 46,
                 height: 46,
@@ -3531,9 +3541,7 @@ class _ChatScreenState extends State<ChatScreen>
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  _messageController.text.trim().isNotEmpty
-                      ? Icons.send
-                      : Icons.mic,
+                  hasText ? Icons.send : Icons.mic,
                   color: Colors.white,
                   size: 22,
                 ),
@@ -3545,6 +3553,38 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  Widget _inputCircleButton(
+    ThemeData theme, {
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool active = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(
+            icon,
+            size: 24,
+            color: active
+                ? const Color(0xFF3390EC)
+                : onTap == null
+                    ? theme.colorScheme.onSurface.withOpacity(0.25)
+                    : theme.colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PICKER PANEL
+  // ═══════════════════════════════════════════════════════════════════════
   void _togglePanel(String mode) {
     final wasOpen = _panelMode == mode;
     setState(() {
@@ -3877,8 +3917,7 @@ class _ChatScreenState extends State<ChatScreen>
               : theme.colorScheme.onSurface.withOpacity(0.05),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Text(label,
-            style: const TextStyle(fontSize: 16)),
+        child: Text(label, style: const TextStyle(fontSize: 16)),
       ),
     );
   }
@@ -4083,6 +4122,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ATTACHMENT SHEET
+  // ═══════════════════════════════════════════════════════════════════════
   void _showAttachmentSheet(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -4107,34 +4149,51 @@ class _ChatScreenState extends State<ChatScreen>
                     Navigator.pop(context);
                     _showGalleryPicker();
                   }),
-                  _attachTile(theme, Icons.folder_outlined, 'File',
+                  _attachTile(theme, Icons.camera_alt_outlined, 'Camera',
                       onTap: () {
                     Navigator.pop(context);
-                    _pickFile();
+                    _takePhoto();
                   }),
-                  _attachTile(theme, Icons.location_on_outlined,
-                      'Location', onTap: () {
+                  _attachTile(theme, Icons.videocam_outlined, 'Video',
+                      onTap: () {
                     Navigator.pop(context);
-                    _showLocationSheet();
+                    _pickVideo();
                   }),
                 ],
               ),
               const SizedBox(height: 4),
               Row(
                 children: [
-                  _attachTile(theme, Icons.article_outlined, 'Article',
-                      onTap: () {
+                  _attachTile(theme, Icons.videocam, 'Record', onTap: () {
                     Navigator.pop(context);
+                    _recordVideo();
+                  }),
+                  _attachTile(theme, Icons.insert_drive_file_outlined,
+                      'File', onTap: () {
+                    Navigator.pop(context);
+                    _pickFile();
+                  }),
+                  _attachTile(theme, Icons.local_fire_department_outlined,
+                      'View once', onTap: () {
+                    _pickViewOnce();
+                  }),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  _attachTile(theme, Icons.location_on_outlined,
+                      'Location', onTap: () {
+                    Navigator.pop(context);
+                    _showLocationSheet();
                   }),
                   _attachTile(theme, Icons.person_outline, 'Contact',
                       onTap: () {
                     Navigator.pop(context);
                     _openShareContactSheet();
                   }),
-                  _attachTile(theme, Icons.music_note_outlined, 'Music',
-                      onTap: () {
+                  _attachTile(theme, Icons.schedule, 'Later', onTap: () {
                     Navigator.pop(context);
-                    _pickFile();
                   }),
                 ],
               ),
@@ -4176,6 +4235,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // GALLERY PICKER — real device media via photo_manager
+  // ═══════════════════════════════════════════════════════════════════════
   void _showGalleryPicker() {
     showModalBottomSheet(
       context: context,
@@ -4185,105 +4247,75 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       isScrollControlled: true,
       builder: (_) => FractionallySizedBox(
-        heightFactor: 0.6,
-        child: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        Navigator.pop(context);
-                        _takePhoto();
-                      },
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: const BoxDecoration(
-                          color: Colors.white24,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.camera_alt,
-                            color: Colors.white),
-                      ),
-                    ),
-                    const Spacer(),
-                    Text('Gallery',
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600)),
-                    const Spacer(),
-                    const SizedBox(width: 44),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: Colors.white24),
-              Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(2),
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    mainAxisSpacing: 2,
-                    crossAxisSpacing: 2,
-                  ),
-                  itemCount: 12,
-                  itemBuilder: (_, i) => GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                      _pickMultipleImages();
-                    },
-                    child: Container(
-                      color: Colors.white10,
-                      child: const Icon(Icons.image,
-                          color: Colors.white24, size: 40),
-                    ),
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 12),
-                color: const Color(0xFF242F3D),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _galleryBottomBtn(Icons.photo_library,
-                        'Gallery', active: true),
-                    _galleryBottomBtn(Icons.folder, 'File'),
-                    _galleryBottomBtn(Icons.location_on, 'Location'),
-                    _galleryBottomBtn(Icons.article, 'Article'),
-                    _galleryBottomBtn(Icons.person, 'Contact'),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        heightFactor: 0.75,
+        child: _GallerySheet(
+          onPickAssets: (assets) async {
+            Navigator.pop(context);
+            await _sendPhotoManagerAssets(assets);
+          },
+          onCamera: () {
+            Navigator.pop(context);
+            _takePhoto();
+          },
+          onFile: () {
+            Navigator.pop(context);
+            _pickFile();
+          },
+          onVideo: () {
+            Navigator.pop(context);
+            _pickVideo();
+          },
         ),
       ),
     );
   }
 
-  Widget _galleryBottomBtn(IconData icon, String label,
-      {bool active = false}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon,
-            color: active ? const Color(0xFF6FB9F3) : Colors.white70,
-            size: 22),
-        const SizedBox(height: 4),
-        Text(label,
-            style: TextStyle(
-                color: active ? const Color(0xFF6FB9F3) : Colors.white70,
-                fontSize: 10)),
-      ],
-    );
+  Future<void> _sendPhotoManagerAssets(List<AssetEntity> assets) async {
+    if (assets.isEmpty) return;
+    if (assets.length == 1) {
+      final file = await assets.first.file;
+      if (file == null) return;
+      final isVideo = assets.first.type == AssetType.video;
+      await _uploadAndSendMedia(
+        file: file,
+        type: isVideo ? 'video' : 'image',
+        fileName: isVideo ? 'Video' : 'Photo',
+      );
+      return;
+    }
+    // Multi-image → send as album (only images here for simplicity)
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Row(children: [
+        SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: 12),
+        Text('Uploading...'),
+      ]),
+      duration: Duration(seconds: 60),
+    ));
+    try {
+      final uploaded = <Map<String, dynamic>>[];
+      for (final a in assets) {
+        final file = await a.file;
+        if (file == null) continue;
+        final url = await CloudinaryService.uploadImage(
+            file, 'luma/chats/$_chatId');
+        if (url != null) uploaded.add({'url': url});
+      }
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (uploaded.isEmpty) return;
+      await _sendMessage(
+        type: 'image',
+        content: 'Album',
+        mediaUrl: uploaded.first['url'],
+        images: uploaded,
+      );
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
   }
 
   void _showLocationSheet() {
@@ -4322,6 +4354,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
   String _fmtDuration(int s) {
     final m = (s ~/ 60).toString().padLeft(2, '0');
     final sec = (s % 60).toString().padLeft(2, '0');
@@ -4337,6 +4372,380 @@ class _ChatScreenState extends State<ChatScreen>
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GALLERY SHEET — real device media (photo_manager)
+// ═══════════════════════════════════════════════════════════════════════════
+class _GallerySheet extends StatefulWidget {
+  final void Function(List<AssetEntity>) onPickAssets;
+  final VoidCallback onCamera;
+  final VoidCallback onFile;
+  final VoidCallback onVideo;
+
+  const _GallerySheet({
+    required this.onPickAssets,
+    required this.onCamera,
+    required this.onFile,
+    required this.onVideo,
+  });
+
+  @override
+  State<_GallerySheet> createState() => _GallerySheetState();
+}
+
+class _GallerySheetState extends State<_GallerySheet> {
+  bool _loading = true;
+  bool _permissionDenied = false;
+  List<AssetEntity> _assets = [];
+  final Set<String> _selected = {};
+  bool _albumMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecent();
+  }
+
+  Future<void> _loadRecent() async {
+    try {
+      final perm = await PhotoManager.requestPermissionExtend();
+      if (!perm.isAuth) {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _permissionDenied = true;
+          });
+        }
+        return;
+      }
+      final albums = await PhotoManager.getAssetPathList(
+        type: RequestType.common,
+        onlyAll: true,
+      );
+      if (albums.isEmpty) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      final recent = await albums.first.getAssetListPaged(page: 0, size: 60);
+      if (!mounted) return;
+      setState(() {
+        _assets = recent;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _permissionDenied = true;
+        });
+      }
+    }
+  }
+
+  void _toggleSelect(String id) {
+    setState(() {
+      if (_selected.contains(id)) {
+        _selected.remove(id);
+        if (_selected.isEmpty) _albumMode = false;
+      } else {
+        _selected.add(id);
+        if (_selected.length > 1) _albumMode = true;
+      }
+    });
+  }
+
+  void _confirm() {
+    final picked =
+        _assets.where((a) => _selected.contains(a.id)).toList();
+    widget.onPickAssets(picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: widget.onCamera,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: Colors.white24,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.camera_alt,
+                        color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: widget.onVideo,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: Colors.white24,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.videocam,
+                        color: Colors.white),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _albumMode
+                      ? '${_selected.length} selected'
+                      : 'Gallery',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                if (_selected.isNotEmpty)
+                  GestureDetector(
+                    onTap: _confirm,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3390EC),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text('Send',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  )
+                else
+                  const SizedBox(width: 44),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: Colors.white24),
+
+          // Grid
+          Expanded(
+            child: _loading
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: Color(0xFF3390EC)))
+                : _permissionDenied
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.photo_library_outlined,
+                                  color: Colors.white54, size: 48),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Photo permission needed.\nGrant access in settings.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 13),
+                              ),
+                              const SizedBox(height: 16),
+                              TextButton(
+                                onPressed: () {
+                                  PhotoManager.openSetting();
+                                },
+                                child: const Text('Open Settings',
+                                    style: TextStyle(
+                                        color: Color(0xFF3390EC))),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : _assets.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No photos on device',
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5)),
+                            ),
+                          )
+                        : GridView.builder(
+                            padding: const EdgeInsets.all(2),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              mainAxisSpacing: 2,
+                              crossAxisSpacing: 2,
+                            ),
+                            itemCount: _assets.length,
+                            itemBuilder: (_, i) {
+                              final a = _assets[i];
+                              final isSelected =
+                                  _selected.contains(a.id);
+                              return GestureDetector(
+                                onTap: () {
+                                  if (_albumMode || a.type == AssetType.image) {
+                                    _toggleSelect(a.id);
+                                  } else {
+                                    widget.onPickAssets([a]);
+                                  }
+                                },
+                                onLongPress: () {
+                                  _toggleSelect(a.id);
+                                },
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    _AssetThumb(asset: a),
+                                    if (isSelected)
+                                      Container(
+                                        color: Colors.black38,
+                                        alignment: Alignment.topRight,
+                                        padding: const EdgeInsets.all(4),
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.all(2),
+                                          decoration:
+                                              const BoxDecoration(
+                                            color: Color(0xFF3390EC),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                              Icons.check,
+                                              color: Colors.white,
+                                              size: 14),
+                                        ),
+                                      ),
+                                    if (a.type == AssetType.video)
+                                      Positioned(
+                                        bottom: 4,
+                                        left: 4,
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black54,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(
+                                                  Icons.play_arrow,
+                                                  color: Colors.white,
+                                                  size: 12),
+                                              Text(
+                                                _dur(a.duration),
+                                                style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+          ),
+
+          // Bottom action bar
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: const Color(0xFF242F3D),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _bottomBtn(Icons.photo_library, 'Gallery', active: true),
+                _bottomBtn(Icons.folder, 'File',
+                    onTap: widget.onFile),
+                _bottomBtn(Icons.camera_alt, 'Camera',
+                    onTap: widget.onCamera),
+                _bottomBtn(Icons.videocam, 'Video',
+                    onTap: widget.onVideo),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomBtn(IconData icon, String label,
+      {bool active = false, VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon,
+              color: active ? const Color(0xFF6FB9F3) : Colors.white70,
+              size: 22),
+          const SizedBox(height: 4),
+          Text(label,
+              style: TextStyle(
+                  color: active ? const Color(0xFF6FB9F3) : Colors.white70,
+                  fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  String _dur(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+}
+
+class _AssetThumb extends StatefulWidget {
+  final AssetEntity asset;
+  const _AssetThumb({required this.asset});
+
+  @override
+  State<_AssetThumb> createState() => _AssetThumbState();
+}
+
+class _AssetThumbState extends State<_AssetThumb> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final data = await widget.asset.thumbnailDataWithSize(
+      const ThumbnailSize(300, 300),
+      quality: 80,
+    );
+    if (mounted) setState(() => _bytes = data);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes == null) {
+      return Container(color: Colors.white10);
+    }
+    return Image.memory(_bytes!, fit: BoxFit.cover, gaplessPlayback: true);
   }
 }
 
@@ -5245,7 +5654,7 @@ class _ViewOnceViewerState extends State<_ViewOnceViewer> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EFFECT BURST (confetti on emoji)
+// EFFECT BURST
 // ═══════════════════════════════════════════════════════════════════════════
 class _EffectBurst {
   static const _styleMap = <String, String>{
@@ -5515,8 +5924,15 @@ class _MessageOptionsOverlay extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        for (final e
-                            in const ['👍', '❤️', '😂', '😍', '😢', '👆', '😁'])
+                        for (final e in const [
+                          '👍',
+                          '❤️',
+                          '😂',
+                          '😍',
+                          '😢',
+                          '👆',
+                          '😁'
+                        ])
                           GestureDetector(
                             onTap: () => onReact(e),
                             child: Text(e,
