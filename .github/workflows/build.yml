@@ -33,21 +33,16 @@ jobs:
           channel: 'stable'
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 1 — Ensure a release keystore exists (generate + commit if missing)
+      # STEP 1 — Ensure a release keystore exists
       # ═══════════════════════════════════════════════════════════════════════
       - name: Ensure release keystore exists
         run: |
           mkdir -p /tmp/backup
-
           if [ -f android/app/luma-release.jks ] && [ -f android/key.properties ]; then
-            echo "✅ Keystore already exists in repo — backing up"
             cp android/app/luma-release.jks /tmp/backup/luma-release.jks
             cp android/key.properties /tmp/backup/key.properties
           else
-            echo "⚠️ Keystore missing — generating fresh"
-
             mkdir -p android/app
-
             keytool -genkeypair -v \
               -keystore /tmp/backup/luma-release.jks \
               -alias luma \
@@ -55,26 +50,20 @@ jobs:
               -storepass luma12345 \
               -keypass luma12345 \
               -dname "CN=Luma Chat, OU=Mobile, O=Luma, L=London, ST=London, C=GB"
-
             cat > /tmp/backup/key.properties << 'EOF'
           storePassword=luma12345
           keyPassword=luma12345
           keyAlias=luma
           storeFile=luma-release.jks
           EOF
-
             cp /tmp/backup/luma-release.jks android/app/luma-release.jks
             cp /tmp/backup/key.properties android/key.properties
-
             git config user.name "Luma Chat CI"
             git config user.email "actions@github.com"
             git add -f android/app/luma-release.jks android/key.properties
             git commit -m "Add release signing keystore [skip ci]" || echo "nothing to commit"
             git push || echo "push failed — continuing anyway"
-
-            echo "✅ Keystore generated and committed"
           fi
-
           ls -la /tmp/backup/
 
       - name: Backup keystore + google-services.json
@@ -83,11 +72,9 @@ jobs:
           cp android/app/google-services.json /tmp/google-services.json
           cp android/app/luma-release.jks /tmp/backup/luma-release.jks
           cp android/key.properties /tmp/backup/key.properties
-          echo "=== Backed up ==="
-          ls -la /tmp/backup/
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 2 — Create fresh Android project + restore critical files
+      # STEP 2 — Fresh Android project
       # ═══════════════════════════════════════════════════════════════════════
       - name: Create Android project
         run: |
@@ -97,10 +84,6 @@ jobs:
           cp /tmp/google-services.json android/app/google-services.json
           cp /tmp/backup/luma-release.jks android/app/luma-release.jks
           cp /tmp/backup/key.properties android/key.properties
-          echo "=== Restored files ==="
-          ls -la android/app/google-services.json
-          ls -la android/app/luma-release.jks
-          ls -la android/key.properties
 
       - name: Fix settings.gradle
         run: |
@@ -125,9 +108,9 @@ jobs:
 
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "7.4.2" apply false
+              id "com.android.application" version "8.1.4" apply false
               id "org.jetbrains.kotlin.android" version "1.9.10" apply false
-              id "com.google.gms.google-services" version "4.3.15" apply false
+              id "com.google.gms.google-services" version "4.4.2" apply false
           }
 
           include ":app"
@@ -163,19 +146,17 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-7.6.3-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.3-all.zip
           EOF
 
       - name: Fix gradle.properties
         run: |
           cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G
           android.useAndroidX=true
           android.enableJetifier=true
           android.enableR8.fullMode=false
-          android.enableR8=true
           kotlin.jvm.target.validation.mode=warning
-          android.suppressUnsupportedCompileSdk=34
           EOF
 
       # ═══════════════════════════════════════════════════════════════════════
@@ -210,7 +191,7 @@ jobs:
           EOF
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 4 — Configure build.gradle with release signing
+      # STEP 4 — app/build.gradle
       # ═══════════════════════════════════════════════════════════════════════
       - name: Fix app build.gradle for ALL phones
         run: |
@@ -223,9 +204,9 @@ jobs:
           content = re.sub(r'namespace\s+"[^"]*"', 'namespace "com.lumachat.app"', content)
           content = re.sub(r'applicationId\s+"[^"]*"', 'applicationId "com.lumachat.app"', content)
 
-          content = re.sub(r'compileSdk\s*=?\s*flutter\.compileSdkVersion', 'compileSdk = 34', content)
-          content = re.sub(r'compileSdkVersion\s+.*', 'compileSdkVersion 34', content)
-          content = re.sub(r'compileSdk\s*=?\s*\d+', 'compileSdk = 34', content)
+          content = re.sub(r'compileSdk\s*=?\s*flutter\.compileSdkVersion', 'compileSdk = 35', content)
+          content = re.sub(r'compileSdkVersion\s+.*', 'compileSdkVersion 35', content)
+          content = re.sub(r'compileSdk\s*=?\s*\d+', 'compileSdk = 35', content)
           content = re.sub(r'targetSdk\s*=?\s*flutter\.targetSdkVersion', 'targetSdk = 34', content)
           content = re.sub(r'targetSdkVersion\s+.*', 'targetSdkVersion 34', content)
           content = re.sub(r'targetSdk\s*=?\s*\d+', 'targetSdk = 34', content)
@@ -282,7 +263,7 @@ jobs:
           PYEOF
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 5 — MainActivity with native voice recorder (no `record` package)
+      # STEP 5 — MainActivity with native recorder
       # ═══════════════════════════════════════════════════════════════════════
       - name: Force MainActivity with native recorder
         run: |
@@ -415,12 +396,7 @@ jobs:
       - name: Create ProGuard rules
         run: |
           cat > android/app/proguard-rules.pro << 'EOF'
-          -keep class io.flutter.app.** { *; }
-          -keep class io.flutter.plugin.** { *; }
-          -keep class io.flutter.util.** { *; }
-          -keep class io.flutter.view.** { *; }
           -keep class io.flutter.** { *; }
-          -keep class io.flutter.plugins.** { *; }
           -keep class androidx.lifecycle.** { *; }
           -keep class com.google.firebase.** { *; }
           -keep class com.google.android.gms.** { *; }
@@ -428,25 +404,14 @@ jobs:
           -dontwarn io.agora.**
           -keep class com.cloudinary.** { *; }
           -dontwarn com.cloudinary.**
-          -keep class okhttp3.** { *; }
-          -keep class retrofit2.** { *; }
-          -dontwarn retrofit2.**
-          -keepclassmembers class * {
-              @com.google.gson.annotations.SerializedName <fields>;
-          }
-
           -keep class androidx.exifinterface.** { *; }
-          -dontwarn androidx.exifinterface.**
           -keep class com.fluttercandies.photo_manager.** { *; }
           -dontwarn com.fluttercandies.photo_manager.**
-
-          -dontwarn kotlin.**
-          -dontwarn kotlinx.**
           -keep class kotlin.** { *; }
           -keep class kotlinx.** { *; }
-
+          -dontwarn kotlin.**
+          -dontwarn kotlinx.**
           -keepattributes SourceFile,LineNumberTable
-          -renamesourcefileattribute SourceFile
           EOF
 
       - name: Create AndroidManifest.xml
@@ -486,7 +451,6 @@ jobs:
                   android:fullBackupContent="true"
                   android:largeHeap="true"
                   android:hardwareAccelerated="true"
-                  android:extractNativeLibs="true"
                   android:requestLegacyExternalStorage="true">
 
                   <activity
@@ -547,7 +511,7 @@ jobs:
         run: mkdir -p assets/images assets/emojis assets/audio
 
       # ═══════════════════════════════════════════════════════════════════════
-      # STEP 6 — Fetch dependencies and build
+      # STEP 6 — Build
       # ═══════════════════════════════════════════════════════════════════════
       - name: Flutter pub get
         run: flutter pub get
@@ -556,7 +520,7 @@ jobs:
         run: flutter pub run flutter_launcher_icons
 
       - name: Build APK (split per ABI)
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --no-shrink
 
       - name: Upload split APKs
         uses: actions/upload-artifact@v4
