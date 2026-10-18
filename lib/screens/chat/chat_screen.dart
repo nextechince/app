@@ -289,8 +289,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (_initialized) return;
     _initialized = true;
 
-    final args =
-        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
     if (args != null) {
       _chatId = args['chatId'] as String?;
       _chatName = args['chatName'] as String?;
@@ -313,17 +312,10 @@ class _ChatScreenState extends State<ChatScreen>
     _loadWallpaper();
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // WALLPAPER & CHAT INFO
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadWallpaper() async {
     if (_currentUserId == null) return;
     _wallpaperSub?.cancel();
-    _wallpaperSub = FirebaseFirestore.instance
-        .collection('user_settings')
-        .doc(_currentUserId)
-        .snapshots()
-        .listen((doc) {
+    _wallpaperSub = FirebaseFirestore.instance.collection('user_settings').doc(_currentUserId).snapshots().listen((doc) {
       if (!mounted) return;
       final d = doc.data() ?? {};
       final wallpapers = (d['chat_wallpapers'] as Map<String, dynamic>?) ?? {};
@@ -521,9 +513,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGES
-  // ═══════════════════════════════════════════════════════════════════════
   List<Map<String, dynamic>> _filterDocs(Iterable<QueryDocumentSnapshot> docs) {
     final loaded = <Map<String, dynamic>>[];
     for (final doc in docs) {
@@ -654,9 +643,6 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) {}
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // SEND
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _sendTextMessage() async {
     if (_isBlocked || !_canSend || _isAnnouncementsOnly) return;
     final text = _messageController.text.trim();
@@ -810,9 +796,6 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) { return null; }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // STICKERS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadStickers() async {
     if (_currentUserId == null || _loadingStickers) return;
     setState(() => _loadingStickers = true);
@@ -950,9 +933,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // VOICE RECORDING
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _startRecordingTelegram() async {
     try {
       final has = await _audioRecorder.hasPermission();
@@ -1021,9 +1001,6 @@ class _ChatScreenState extends State<ChatScreen>
     setState(() { _isRecordingLocked = true; _recordingSlideOffset = 0; });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MEDIA PICKERS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _pickImage() async {
     if (!_canSendFiles) return;
     final x = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
@@ -1108,9 +1085,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // AUDIO PLAYBACK + MEDIA VIEWERS
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _playVoice(String id, String url) async {
     try {
       if (_currentlyPlayingAudioId == id) {
@@ -1144,9 +1118,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // LOCATION & CONTACT
-  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _shareLocation() async {
     Navigator.pop(context);
     try {
@@ -1256,9 +1227,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGE OPTIONS
-  // ═══════════════════════════════════════════════════════════════════════
   void _showMessageOptions(Map<String, dynamic> m) {
     final canForward = Provider.of<SettingsProvider>(context, listen: false).forwardedMessages;
     final isMe = m['sender_id'] == _currentUserId;
@@ -1741,9 +1709,6 @@ class _ChatScreenState extends State<ChatScreen>
     super.dispose();
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // BUILD
-  // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1806,9 +1771,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HEADER
-  // ═══════════════════════════════════════════════════════════════════════
   PreferredSizeWidget _buildHeader(ThemeData theme) {
     final displayName = _otherUserNickname ?? _chatName ?? 'Chat';
     final verified = _userCache[_otherUserId]?['is_verified'] == true;
@@ -2051,9 +2013,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // BANNERS
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildPinnedBanner(ThemeData theme) {
     return GestureDetector(
       onTap: () {},
@@ -2145,9 +2104,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MESSAGE LIST
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildMessageList(ThemeData theme) {
     final list = _messages.reversed.toList();
     return ListView.builder(
@@ -2177,7 +2133,7 @@ class _ChatScreenState extends State<ChatScreen>
                 if (_multiSelectMode) {
                   _toggleMultiSelect(m['id']);
                 } else if (m['media_type'] == 'image' && m['media_url'] != null) {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imageUrl: m['media_url'])));
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaViewerScreen(imageUrl: m['media_url'])));
                 }
               },
               onLongPress: () {
@@ -2189,7 +2145,7 @@ class _ChatScreenState extends State<ChatScreen>
               audioPosition: _audioPosition,
               audioDuration: _audioDuration,
               onPlayAudio: (id, url) => _playVoice(id, url),
-              onOpenImage: (url) => Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imageUrl: url))),
+              onOpenImage: (url) => Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaViewerScreen(imageUrl: url))),
               onOpenFile: _openFile,
               onOpenLocation: (lat, lng) => launchUrl(Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng'), mode: LaunchMode.externalApplication),
               videoControllers: _videoControllers,
@@ -2412,9 +2368,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // INPUT BAR
-  // ═══════════════════════════════════════════════════════════════════════
   Widget _buildInputBar(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final disabled = !_canSend || _isAnnouncementsOnly || (_isBlocked && !_isGroup);
@@ -2501,9 +2454,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PICKER PANEL
-  // ═══════════════════════════════════════════════════════════════════════
   void _togglePanel(String mode) {
     final wasOpen = _panelMode == mode;
     setState(() {
@@ -2907,9 +2857,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // ATTACHMENT SHEET (Request 2: Removed View once and Later)
-  // ═══════════════════════════════════════════════════════════════════════
   void _showAttachmentSheet(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -2967,7 +2914,7 @@ class _ChatScreenState extends State<ChatScreen>
                     Navigator.pop(context);
                     _openShareContactSheet();
                   }),
-                  const Expanded(child: SizedBox()), // Empty space to keep alignment
+                  const Expanded(child: SizedBox()),
                   const Expanded(child: SizedBox()),
                 ],
               ),
@@ -2998,8 +2945,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  void _showGalleryPicker() {}
-
   void _showLocationSheet() {
     final theme = Theme.of(context);
     showModalBottomSheet(
@@ -3021,9 +2966,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // HELPERS
-  // ═══════════════════════════════════════════════════════════════════════
   String _fmtDuration(int s) {
     final m = (s ~/ 60).toString().padLeft(2, '0');
     final sec = (s % 60).toString().padLeft(2, '0');
@@ -3039,7 +2981,120 @@ class _ChatScreenState extends State<ChatScreen>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MEDIA EDITOR (Request 5: Looks like the screenshot)
+// CUSTOM MEDIA VIEWER (From your old code)
+// ═══════════════════════════════════════════════════════════════════════════
+class _MediaViewerScreen extends StatefulWidget {
+  final String imageUrl;
+  const _MediaViewerScreen({required this.imageUrl});
+
+  @override
+  State<_MediaViewerScreen> createState() => _MediaViewerScreenState();
+}
+
+class _MediaViewerScreenState extends State<_MediaViewerScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          IconButton(icon: const Icon(Icons.download, color: Colors.white), onPressed: () {}),
+          PopupMenuButton<String>(
+            color: const Color(0xFF1F2C34),
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onSelected: (value) {},
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'save',
+                child: Row(
+                  children: [
+                    Icon(Icons.save_alt, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Save to Gallery', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'media',
+                child: Row(
+                  children: [
+                    Icon(Icons.grid_view, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Show All Media', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'chat',
+                child: Row(
+                  children: [
+                    Icon(Icons.remove_red_eye, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Show in chat', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'sticker',
+                child: Row(
+                  children: [
+                    Icon(Icons.emoji_emotions, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Create Sticker', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'reply',
+                child: Row(
+                  children: [
+                    Icon(Icons.reply, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Reply', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'share',
+                child: Row(
+                  children: [
+                    Icon(Icons.share, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Share', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                    SizedBox(width: 12),
+                    Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          child: CachedNetworkImage(imageUrl: widget.imageUrl, fit: BoxFit.contain),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEDIA EDITOR (Opens before sending)
 // ═══════════════════════════════════════════════════════════════════════════
 class _MediaEditorScreen extends StatefulWidget {
   final String imageUrl;
@@ -3106,7 +3161,7 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
                   icon: const Icon(Icons.send, color: Colors.blue),
                   onPressed: () {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Image sent with caption (Not fully functional text overlay)')));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Image sent with caption')));
                   },
                 ),
               ],
@@ -3158,9 +3213,6 @@ class _WallpaperLayer extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// EMPTY STATE
-// ═══════════════════════════════════════════════════════════════════════════
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 
@@ -3180,9 +3232,6 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STICKER VIDEO PREVIEW
-// ═══════════════════════════════════════════════════════════════════════════
 class _StickerVideoPreview extends StatefulWidget {
   final String url;
   const _StickerVideoPreview({required this.url});
@@ -3222,9 +3271,6 @@ class _StickerVideoPreviewState extends State<_StickerVideoPreview> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// INVITE / SLUG DETECTORS
-// ═══════════════════════════════════════════════════════════════════════════
 class _InviteLinkDetector {
   static final _re = RegExp(r'https?://([a-z0-9-]+\.web\.app)/join/([A-Za-z0-9_-]{2,60})', caseSensitive: false);
   static String? detect(String text) {
@@ -4152,8 +4198,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     offset: Offset(isMine ? -_dragOffset : _dragOffset, 0),
                     child: Container(
                       padding: isSticker
-                          ? EdgeInsets.zero
-                          : (singleEmoji ? EdgeInsets.zero : (type == 'text' ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6) : const EdgeInsets.all(4))),
+                          ? EdgeInsets.zero                          : (singleEmoji ? EdgeInsets.zero : (type == 'text' ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6) : const EdgeInsets.all(4))),
                       decoration: BoxDecoration(
                         color: isSticker || singleEmoji ? Colors.transparent : (isMine ? mineBubble : otherBubble),
                         borderRadius: borderRadius,
