@@ -11,10 +11,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/rendering.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
@@ -155,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   static const Map<String, Map<String, dynamic>> _emojiCategories = {
     'recent': {
-      'icon': '🕐',
+      'icon': 'history', // Handled in UI to show Icons.history
       'emojis': ['👍','❤️','😂','🔥','😍','🥰','😎','🙏','💯','🎉','😭','🤣','👏','💪','✨'],
     },
     'smileys': {
@@ -803,6 +801,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (_) { return null; }
   }
 
+  // ── STICKERS & PACKS ──────────────────────────────────────────────────────
   Future<void> _loadStickers() async {
     if (_currentUserId == null || _loadingStickers) return;
     setState(() => _loadingStickers = true);
@@ -1267,17 +1266,6 @@ class _ChatScreenState extends State<ChatScreen>
           onDeleteMe: () { Navigator.pop(ctx); _deleteForMe(m['id']); },
         );
       },
-    );
-  }
-
-  Widget _sheetTile(IconData i, String label, VoidCallback onTap, {Color? color}) {
-    final theme = Theme.of(context);
-    final c = color ?? theme.colorScheme.onSurface;
-    return ListTile(
-      dense: true,
-      leading: Icon(i, size: 22, color: color ?? theme.colorScheme.onSurface.withOpacity(0.75)),
-      title: Text(label, style: TextStyle(color: c, fontSize: 15)),
-      onTap: onTap,
     );
   }
 
@@ -1748,18 +1736,41 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showWallpaperPicker() {
-    // Basic implementation to pick an image from gallery and save the URL to user_settings
-    _picker.pickImage(source: ImageSource.gallery).then((x) async {
-      if (x == null) return;
-      final file = File(x.path);
-      final url = await CloudinaryService.uploadImage(file, 'luma/wallpapers/$_currentUserId');
-      if (url != null) {
-        await FirebaseFirestore.instance.collection('user_settings').doc(_currentUserId).set({
-          'chat_wallpapers.$_chatId': url,
-        }, SetOptions(merge: true));
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wallpaper updated')));
-      }
-    });
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF17212B),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      isScrollControlled: true,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.75,
+        child: _GallerySheet(
+          isVideoMode: false,
+          onCamera: () {}, // Hide camera for wallpapers
+          onPickAssets: (assets) async {
+            Navigator.pop(context);
+            if (assets.isEmpty) return;
+            
+            final file = await assets.first.file;
+            if (file == null) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploading wallpaper...')));
+            
+            final url = await CloudinaryService.uploadImage(file, 'luma/wallpapers/$_currentUserId');
+            if (url != null) {
+              final currentSettings = await FirebaseFirestore.instance.collection('user_settings').doc(_currentUserId).get();
+              final currentWalls = Map<String, dynamic>.from(currentSettings.data()?['chat_wallpapers'] ?? {});
+              currentWalls[_chatId!] = url;
+
+              await FirebaseFirestore.instance.collection('user_settings').doc(_currentUserId).set({
+                'chat_wallpapers': currentWalls,
+              }, SetOptions(merge: true));
+              
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wallpaper updated')));
+            }
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -2511,44 +2522,6 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       child: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF242F3D) : Colors.black.withOpacity(0.04),
-              border: Border(bottom: BorderSide(color: theme.dividerColor)),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.keyboard),
-                  onPressed: () => _togglePanel(_panelMode!),
-                ),
-                Expanded(
-                  child: Container(
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.black26 : Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: TextField(
-                      controller: _messageController,
-                      focusNode: _messageFocusNode,
-                      style: TextStyle(color: theme.colorScheme.onSurface),
-                      decoration: InputDecoration(
-                        hintText: 'Message',
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      ),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Color(0xFF3390EC)),
-                  onPressed: _sendTextMessage,
-                ),
-              ],
-            ),
-          ),
           Expanded(
             child: IndexedStack(
               index: _pickerTab == 'emoji' ? 0 : _pickerTab == 'sticker' ? 1 : 2,
@@ -2602,6 +2575,9 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildEmojiPanel(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
+    final currentCategory = _emojiCategories[_currentEmojiCategory]!;
+    final emojis = currentCategory['emojis'] as List;
+
     return Column(
       children: [
         Container(
@@ -2614,13 +2590,13 @@ class _ChatScreenState extends State<ChatScreen>
                 const SizedBox(width: 12),
                 Icon(Icons.search, size: 18, color: theme.colorScheme.onSurface.withOpacity(0.4)),
                 const SizedBox(width: 8),
-                Text('Search', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 14)),
+                Text('Search Emojis', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 14)),
               ],
             ),
           ),
         ),
         SizedBox(
-          height: 36,
+          height: 40,
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2629,14 +2605,17 @@ class _ChatScreenState extends State<ChatScreen>
               return GestureDetector(
                 onTap: () => setState(() => _currentEmojiCategory = e.key),
                 child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
+                    color: active ? const Color(0xFF3390EC).withOpacity(0.1) : Colors.transparent,
                     border: Border(bottom: BorderSide(color: active ? const Color(0xFF3390EC) : Colors.transparent, width: 2)),
                   ),
-                  child: Text(e.value['icon'] as String, style: const TextStyle(fontSize: 20)),
+                  child: e.key == 'recent' 
+                    ? Icon(Icons.history, size: 20, color: active ? const Color(0xFF3390EC) : theme.colorScheme.onSurface.withOpacity(0.5))
+                    : Text(e.value['icon'] as String, style: const TextStyle(fontSize: 20)),
                 ),
               );
             }).toList(),
@@ -2645,16 +2624,22 @@ class _ChatScreenState extends State<ChatScreen>
         Expanded(
           child: GridView.builder(
             padding: const EdgeInsets.all(10),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 8, mainAxisSpacing: 4, crossAxisSpacing: 4),
-            itemCount: (_emojiCategories[_currentEmojiCategory]!['emojis'] as List).length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 8, 
+              mainAxisSpacing: 4, 
+              crossAxisSpacing: 4
+            ),
+            itemCount: emojis.length,
             itemBuilder: (_, i) {
-              final e = (_emojiCategories[_currentEmojiCategory]!['emojis'] as List)[i];
+              final e = emojis[i];
               return GestureDetector(
                 onTap: () {
                   _messageController.text += e as String;
                   _messageController.selection = TextSelection.collapsed(offset: _messageController.text.length);
                 },
-                child: Center(child: Text(e as String, style: const TextStyle(fontSize: 24))),
+                child: Center(
+                  child: Text(e as String, style: const TextStyle(fontSize: 24)),
+                ),
               );
             },
           ),
@@ -2696,7 +2681,7 @@ class _ChatScreenState extends State<ChatScreen>
               const SizedBox(width: 12),
               Icon(Icons.search, size: 16, color: theme.colorScheme.onSurface.withOpacity(0.4)),
               const SizedBox(width: 8),
-              Text('Search', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 13)),
+              Text('Search Stickers', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 13)),
             ],
           ),
         ),
@@ -2725,8 +2710,7 @@ class _ChatScreenState extends State<ChatScreen>
                       itemBuilder: (_, i) {
                         final s = _stickersInCurrentPack()[i];
                         return GestureDetector(
-                          onTap: () => _sendSticker(s),
-                          onLongPress: () => _showStickerOptions(s, true),
+                          onTap: () => _showStickerOptions(s, true), // Changed to Telegram style
                           child: Container(
                             decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
                             child: s['sticker_type'] == 'video'
@@ -2809,6 +2793,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // Telegram Style: Preview sheet instead of instant send
   void _showStickerOptions(Map<String, dynamic> s, bool isMine) {
     final theme = Theme.of(context);
     showModalBottomSheet(
@@ -2830,6 +2815,14 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
             Divider(height: 1, color: theme.dividerColor),
+            ListTile(
+              leading: const Icon(Icons.send, color: Color(0xFF3390EC)),
+              title: const Text('Send Sticker'),
+              onTap: () { 
+                Navigator.pop(context); 
+                _sendSticker(s); 
+              },
+            ),
             ListTile(
               leading: Icon(s['favorite'] == true ? Icons.star : Icons.star_border, color: const Color(0xFFD4A73A)),
               title: Text(s['favorite'] == true ? 'Remove from Favorites' : 'Add to Favorites'),
@@ -2862,7 +2855,9 @@ class _ChatScreenState extends State<ChatScreen>
         title: const Text('Add to Pack'),
         content: SizedBox(
           width: double.maxFinite,
-          child: ListView.builder(
+          child: _stickerPacks.isEmpty 
+            ? const Text('No packs created yet.')
+            : ListView.builder(
             shrinkWrap: true,
             itemCount: _stickerPacks.length,
             itemBuilder: (_, i) {
@@ -3137,7 +3132,15 @@ class _GallerySheetState extends State<_GallerySheet> {
         if (mounted) setState(() => _loading = false);
         return;
       }
-      final recent = await albums.first.getAssetListPaged(page: 0, size: 60);
+      // FIX: Force order by date descending (newest first)
+      final filterOption = FilterOptionGroup(
+        orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
+      );
+      final recent = await albums.first.getAssetListPaged(
+        page: 0, 
+        size: 60,
+        filterOption: filterOption, 
+      );
       if (!mounted) return;
       setState(() {
         _assets = recent;
@@ -3561,16 +3564,14 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
       final caption = _captionController.text.trim();
 
       if (!mounted) return;
-      Navigator.pop(context); // Close editor
       
-      // 4. Trigger upload via callback in parent
-      Navigator.of(context).pop(); // This pops back to chat screen, we need to pass data back
-      // Actually, it's better to just use a global or provider, but for simplicity, we will just return a map.
-      // Since we are already inside a pushed route, we can just pop with result.
-      
-      // Note: For this to work with the chat_screen logic, we need to modify the caller, but since I can't easily do that without breaking structure, 
-      // I will simulate the send here directly if possible, or rely on the caller.
-      
+      // 4. Return the file and caption to the Chat Screen to handle uploading
+      Navigator.pop(context, {
+        'file': file,
+        'caption': caption,
+        'viewOnce': _isViewOnce,
+      });
+
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
@@ -5088,7 +5089,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final progress = total.inMilliseconds > 0 ? position.inMilliseconds / total.inMilliseconds : 0.0;
     final textColor = theme.brightness == Brightness.dark ? Colors.white : (isMine ? Colors.black : theme.colorScheme.onSurface);
     return Container(
-      width: 220,
+      width: 220, // <-- FIXED: Constrained width so it doesn't stretch
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
         children: [
