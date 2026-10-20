@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart'; // <-- ADD THIS EXACT LINE HERE
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -3136,10 +3137,12 @@ class _GallerySheetState extends State<_GallerySheet> {
       final filterOption = FilterOptionGroup(
         orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
       );
-      final recent = await albums.first.getAssetListPaged(
+     final recent = await albums.first.getAssetListPaged(
         page: 0, 
         size: 60,
-        filterOption: filterOption, 
+        option: FilterOptionGroup(
+          orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
+        ),
       );
       if (!mounted) return;
       setState(() {
