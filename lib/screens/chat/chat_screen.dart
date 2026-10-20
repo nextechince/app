@@ -3134,16 +3134,21 @@ class _GallerySheetState extends State<_GallerySheet> {
         return;
       }
       // FIX: Force order by date descending (newest first)
-      final filterOption = FilterOptionGroup(
-        orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
-      );
+      final filterOption = FilterOptionGroup()
+  ..addOrderOption(
+    const OrderOption(type: OrderOptionType.createDate, asc: false), // false = newest first
+  );
+
+     final albums = await PhotoManager.getAssetPathList(
+        type: widget.isVideoMode ? RequestType.video : RequestType.image,
+        onlyAll: true,
+        filterOption: filterOption, // ✅ Here
+  );
      final recent = await albums.first.getAssetListPaged(
-        page: 0, 
+        page: 0,
         size: 60,
-        filterOption: FilterOptionGroup(
-          orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
-        ),
-      );
+  // Do not add filterOption here! It does not support this parameter.
+  );
       if (!mounted) return;
       setState(() {
         _assets = recent;
