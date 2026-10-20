@@ -3140,7 +3140,7 @@ class _GallerySheetState extends State<_GallerySheet> {
      final recent = await albums.first.getAssetListPaged(
         page: 0, 
         size: 60,
-        option: FilterOptionGroup(
+        filteroption: FilterOptionGroup(
           orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
         ),
       );
