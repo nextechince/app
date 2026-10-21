@@ -3114,6 +3114,7 @@ class _GallerySheetState extends State<_GallerySheet> {
   }
 
   Future<void> _loadRecent() async {
+    Future<void> _loadRecent() async {
     try {
       final perm = await PhotoManager.requestPermissionExtend();
       if (!perm.isAuth) {
@@ -3125,30 +3126,31 @@ class _GallerySheetState extends State<_GallerySheet> {
         }
         return;
       }
+
+      // ✅ Create filter option for sorting newest first
+      final filterOption = FilterOptionGroup()
+        ..addOrderOption(
+          const OrderOption(type: OrderOptionType.createDate, asc: false),
+        );
+
+      // ✅ Only ONE albums declaration, with filterOption
       final albums = await PhotoManager.getAssetPathList(
         type: widget.isVideoMode ? RequestType.video : RequestType.image,
         onlyAll: true,
+        filterOption: filterOption,
       );
+
       if (albums.isEmpty) {
         if (mounted) setState(() => _loading = false);
         return;
       }
-      // FIX: Force order by date descending (newest first)
-      final filterOption = FilterOptionGroup()
-  ..addOrderOption(
-    const OrderOption(type: OrderOptionType.createDate, asc: false), // false = newest first
-  );
 
-     final albums = await PhotoManager.getAssetPathList(
-        type: widget.isVideoMode ? RequestType.video : RequestType.image,
-        onlyAll: true,
-        filterOption: filterOption, // ✅ Here
-  );
-     final recent = await albums.first.getAssetListPaged(
+      // ✅ No filterOption here — it's already applied at the album level
+      final recent = await albums.first.getAssetListPaged(
         page: 0,
         size: 60,
-  // Do not add filterOption here! It does not support this parameter.
-  );
+      );
+
       if (!mounted) return;
       setState(() {
         _assets = recent;
@@ -3162,7 +3164,7 @@ class _GallerySheetState extends State<_GallerySheet> {
         });
       }
     }
-  }
+    }
 
   void _toggleSelect(String id) {
     setState(() {
