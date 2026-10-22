@@ -10,8 +10,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'; // <-- Ensures RepaintBoundary works
 import 'package:flutter/services.dart';
-import 'package:flutter/rendering.dart'; // <-- ADD THIS EXACT LINE HERE
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -154,7 +154,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   static const Map<String, Map<String, dynamic>> _emojiCategories = {
     'recent': {
-      'icon': 'history', // Handled in UI to show Icons.history
+      'icon': 'history',
       'emojis': ['👍','❤️','😂','🔥','😍','🥰','😎','🙏','💯','🎉','😭','🤣','👏','💪','✨'],
     },
     'smileys': {
@@ -1017,7 +1017,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_canSendFiles) return;
     final x = await _picker.pickImage(source: ImageSource.camera);
     if (x == null) return;
-    Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imagePath: x.path)));
+    final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imagePath: x.path)));
+    if (result != null && result is Map) {
+      await _uploadAndSendMedia(file: result['file'], type: 'image', fileName: 'Photo', viewOnce: result['viewOnce'] ?? false);
+    }
   }
 
   Future<void> _pickVideo() async {
@@ -2711,7 +2714,7 @@ class _ChatScreenState extends State<ChatScreen>
                       itemBuilder: (_, i) {
                         final s = _stickersInCurrentPack()[i];
                         return GestureDetector(
-                          onTap: () => _showStickerOptions(s, true), // Changed to Telegram style
+                          onTap: () => _showStickerOptions(s, true), 
                           child: Container(
                             decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
                             child: s['sticker_type'] == 'video'
@@ -2794,7 +2797,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // Telegram Style: Preview sheet instead of instant send
   void _showStickerOptions(Map<String, dynamic> s, bool isMine) {
     final theme = Theme.of(context);
     showModalBottomSheet(
@@ -3035,7 +3037,10 @@ class _ChatScreenState extends State<ChatScreen>
             } else {
               final file = await assets.first.file;
               if (file != null) {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imagePath: file.path)));
+                final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => _MediaEditorScreen(imagePath: file.path)));
+                if (result != null && result is Map) {
+                  await _uploadAndSendMedia(file: result['file'], type: 'image', fileName: 'Photo', viewOnce: result['viewOnce'] ?? false);
+                }
               }
             }
           },
@@ -3114,7 +3119,6 @@ class _GallerySheetState extends State<_GallerySheet> {
   }
 
   Future<void> _loadRecent() async {
-    Future<void> _loadRecent() async {
     try {
       final perm = await PhotoManager.requestPermissionExtend();
       if (!perm.isAuth) {
@@ -3127,13 +3131,11 @@ class _GallerySheetState extends State<_GallerySheet> {
         return;
       }
 
-      // ✅ Create filter option for sorting newest first
       final filterOption = FilterOptionGroup()
         ..addOrderOption(
           const OrderOption(type: OrderOptionType.createDate, asc: false),
         );
 
-      // ✅ Only ONE albums declaration, with filterOption
       final albums = await PhotoManager.getAssetPathList(
         type: widget.isVideoMode ? RequestType.video : RequestType.image,
         onlyAll: true,
@@ -3145,7 +3147,6 @@ class _GallerySheetState extends State<_GallerySheet> {
         return;
       }
 
-      // ✅ No filterOption here — it's already applied at the album level
       final recent = await albums.first.getAssetListPaged(
         page: 0,
         size: 60,
@@ -3164,7 +3165,7 @@ class _GallerySheetState extends State<_GallerySheet> {
         });
       }
     }
-    }
+  }
 
   void _toggleSelect(String id) {
     setState(() {
@@ -3556,7 +3557,6 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
   Future<void> _sendMedia() async {
     setState(() => _isUploading = true);
     try {
-      // 1. Capture the rendered widget (image + drawings + texts) as an image
       RenderRepaintBoundary boundary = _repaintKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -3564,18 +3564,15 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
       
       Uint8List pngBytes = byteData.buffer.asUint8List();
       
-      // 2. Save to temporary file
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/edited_${DateTime.now().millisecondsSinceEpoch}.png';
       final file = File(path);
       await file.writeAsBytes(pngBytes);
 
-      // 3. Get caption
       final caption = _captionController.text.trim();
 
       if (!mounted) return;
       
-      // 4. Return the file and caption to the Chat Screen to handle uploading
       Navigator.pop(context, {
         'file': file,
         'caption': caption,
@@ -5099,7 +5096,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final progress = total.inMilliseconds > 0 ? position.inMilliseconds / total.inMilliseconds : 0.0;
     final textColor = theme.brightness == Brightness.dark ? Colors.white : (isMine ? Colors.black : theme.colorScheme.onSurface);
     return Container(
-      width: 220, // <-- FIXED: Constrained width so it doesn't stretch
+      width: 220,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
         children: [
@@ -5385,6 +5382,9 @@ class _MdPattern {
   _MdPattern(this.re, this.build);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FINAL CLASS: SPOILER SPAN (Moved to absolute bottom to fix errors)
+// ═══════════════════════════════════════════════════════════════════════════
 class _SpoilerSpan extends StatefulWidget {
   final String text;
   const _SpoilerSpan({required this.text});
