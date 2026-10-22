@@ -203,11 +203,11 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1F1F1F) : Colors.white,
+        // Pure black or extremely dark background to match the WhatsApp dark theme
+        color: isDark ? const Color(0xFF000000) : Colors.white,
         border: Border(
           top: BorderSide(
-            color:
-                isDark ? const Color(0xFF2F2F2F) : const Color(0xFFE4E4E5),
+            color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE4E4E5),
             width: 0.5,
           ),
         ),
@@ -222,7 +222,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
               final selected = i == _bottomIndex;
               final color = selected
                   ? theme.colorScheme.primary
-                  : theme.colorScheme.onSurface.withOpacity(0.6);
+                  : theme.colorScheme.onSurface.withOpacity(0.5);
 
               return Expanded(
                 child: InkWell(
@@ -253,19 +253,22 @@ class _MainAppScreenState extends State<MainAppScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // FAB — only on Chats
+  // FAB — only on Chats (WhatsApp Style)
   // ═══════════════════════════════════════════════════════════════════════
 
   Widget? _buildFAB() {
     if (_bottomIndex != 0) return null;
 
-    final theme = Theme.of(context);
-    return FloatingActionButton(
-      backgroundColor: theme.colorScheme.primary,
-      foregroundColor: Colors.white,
-      elevation: 2,
-      onPressed: () => _showNewChatOptions(context),
-      child: const Icon(Icons.edit_outlined),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0, right: 8.0),
+      child: FloatingActionButton(
+        backgroundColor: const Color(0xFF3390EC), // WhatsApp/Telegram Blue
+        foregroundColor: Colors.white,
+        elevation: 3,
+        shape: const CircleBorder(), // Perfect circle
+        onPressed: () => _showNewChatOptions(context),
+        child: const Icon(Icons.add_comment, size: 26), // WhatsApp chat icon
+      ),
     );
   }
 
@@ -290,6 +293,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final theme = Theme.of(context);
     final auth = context.watch<LumaAuthProvider>();
     final avatar = auth.userPhotoUrl;
+    final isDark = theme.brightness == Brightness.dark;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
@@ -323,109 +327,126 @@ class _MainAppScreenState extends State<MainAppScreen> {
             icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
             onPressed: () => Navigator.pushNamed(context, '/global_search'),
           ),
-          IconButton(
+          // ═══════════════════════════════════════════════════════════════
+          // NEW WHATSAPP STYLE DROPDOWN MENU (Replaces Bottom Sheet)
+          // ═══════════════════════════════════════════════════════════════
+          PopupMenuButton<String>(
+            color: isDark ? const Color(0xFF1F2C34) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             icon: Icon(Icons.more_vert, color: theme.colorScheme.onSurface),
-            onPressed: () => _showChatsMenu(context),
+            onSelected: (value) {
+              if (value == 'new_group') {
+                Navigator.pushNamed(context, '/create_group');
+              } else if (value == 'settings') {
+                setState(() => _bottomIndex = 3); // Go to Settings tab
+              } else if (value == 'starred') {
+                Navigator.pushNamed(context, '/saved_messages');
+              } else if (value == 'linked_devices') {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Linked Devices coming soon')));
+              } else if (value == 'new_broadcast') {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Broadcast lists coming soon')));
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'new_group',
+                child: Text('New group', style: TextStyle(fontSize: 15)),
+              ),
+              const PopupMenuItem(
+                value: 'new_broadcast',
+                child: Text('New broadcast', style: TextStyle(fontSize: 15)),
+              ),
+              const PopupMenuItem(
+                value: 'linked_devices',
+                child: Text('Linked devices', style: TextStyle(fontSize: 15)),
+              ),
+              const PopupMenuItem(
+                value: 'starred',
+                child: Text('Starred messages', style: TextStyle(fontSize: 15)),
+              ),
+              const PopupMenuItem(
+                value: 'settings',
+                child: Text('Settings', style: TextStyle(fontSize: 15)),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  // ─── Folder pills ───
+  // ─── Folder pills (Reduced to only "All Chats" + Custom Tab button) ───
   Widget _buildFolderPills() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
     final chats = context.watch<ChatProvider>().chats;
 
-    final counts = <int, int>{
-      0: chats.length,
-      1: chats
-          .where((c) => ((c['unread_count'] as num?)?.toInt() ?? 0) > 0)
-          .length,
-      2: chats.where((c) => c['type'] == 'group').length,
-      3: chats.where((c) => c['type'] == 'channel').length,
-      4: chats
-          .where((c) => c['type'] == 'bot' || c['is_bot'] == true)
-          .length,
-    };
-
-    final folders = [
-      _Folder(label: 'All Chats', count: counts[0] ?? 0),
-      _Folder(label: 'Unread', count: counts[1] ?? 0),
-      _Folder(label: 'Groups', count: counts[2] ?? 0),
-      _Folder(label: 'Channels', count: counts[3] ?? 0),
-      _Folder(label: 'Bots', count: counts[4] ?? 0),
-    ];
-
     return SizedBox(
       height: 44,
-      child: ListView.separated(
+      child: ListView(
         controller: _folderScroll,
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        itemCount: folders.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
-        itemBuilder: (context, i) {
-          final folder = folders[i];
-          final selected = _folderIndex == i;
-
-          return GestureDetector(
-            onTap: () => setState(() => _folderIndex = i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
+        children: [
+          // All Chats Pill
+          GestureDetector(
+            onTap: () => setState(() => _folderIndex = 0),
+            child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
-                color: selected
-                    ? (isDark
-                        ? const Color(0xFF2A3A52)
-                        : const Color(0xFFE8EDF2))
-                    : Colors.transparent,
+                color: isDark ? const Color(0xFF2A3A52) : const Color(0xFFE8EDF2),
                 borderRadius: BorderRadius.circular(22),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    folder.label,
+                    'All Chats',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: selected
-                          ? theme.colorScheme.onSurface
-                          : theme.colorScheme.onSurface.withOpacity(0.6),
+                      color: theme.colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: selected
-                          ? theme.colorScheme.primary
-                          : (isDark
-                              ? const Color(0xFF3A3A3A)
-                              : const Color(0xFFDDDDDD)),
+                      color: theme.colorScheme.primary,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      '${folder.count}',
-                      style: TextStyle(
+                      '${chats.length}',
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: selected
-                            ? Colors.white
-                            : theme.colorScheme.onSurface
-                                .withOpacity(0.7),
+                        color: Colors.white,
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-          );
-        },
+          ),
+          const SizedBox(width: 8),
+          
+          // Telegram Style "Add Tab" Button
+          GestureDetector(
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Custom Chat Folders coming soon!')));
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF1F1F1),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Icon(Icons.add, size: 20, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -444,24 +465,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
         }
 
         final allChats = chatProvider.chats;
-
-        final List<Map<String, dynamic>> visible =
-            allChats.where((c) {
-          final type = c['type'] as String? ?? 'direct';
-          switch (_folderIndex) {
-            case 0:
-              return true;
-            case 1:
-              return ((c['unread_count'] as num?)?.toInt() ?? 0) > 0;
-            case 2:
-              return type == 'group';
-            case 3:
-              return type == 'channel';
-            case 4:
-              return type == 'bot' || c['is_bot'] == true;
-          }
-          return true;
-        }).toList();
+        final visible = allChats; // No more filtering by folders!
 
         if (visible.isEmpty) return _buildEmptyState();
 
@@ -476,15 +480,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
   Widget _buildEmptyState() {
     final theme = Theme.of(context);
-    final labels = [
-      ('No chats yet', 'Start a conversation by tapping the pencil.'),
-      ('No unread chats', "You're all caught up!"),
-      ('No groups', 'Create or join a group to get started.'),
-      ('No channels', 'Subscribe to a channel to see it here.'),
-      ('No bots', 'Talk to a bot or create your own.'),
-    ];
-    final t = labels[_folderIndex.clamp(0, labels.length - 1)];
-
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -498,13 +493,13 @@ class _MainAppScreenState extends State<MainAppScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              t.$1,
+              'No chats yet',
               style: theme.textTheme.titleMedium
                   ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Text(
-              t.$2,
+              'Start a conversation by tapping the chat button.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.5),
@@ -649,7 +644,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: isDark
-                              ? const Color(0xFF1F1F1F)
+                              ? const Color(0xFF000000)
                               : Colors.white,
                           width: 2,
                         ),
@@ -900,7 +895,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final selected = await showMenu<String>(
       context: context,
       position: position,
-      color: isDark ? const Color(0xFF2B2B2B) : Colors.white,
+      color: isDark ? const Color(0xFF1F2C34) : Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       items: [
         PopupMenuItem(
@@ -1127,47 +1122,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  void _showChatsMenu(BuildContext context) {
-    _showFlatSheet(
-      context: context,
-      children: [
-        _sheetTile(
-          icon: Icons.bookmark_outline,
-          label: 'Saved Messages',
-          onTap: () {
-            Navigator.pop(context);
-            Navigator.pushNamed(context, '/saved_messages');
-          },
-        ),
-        _sheetTile(
-          icon: Icons.archive_outlined,
-          label: 'Archived Chats',
-          onTap: () {
-            Navigator.pop(context);
-            Navigator.pushNamed(context, '/archived_chats');
-          },
-        ),
-        _sheetTile(
-          icon: Icons.smart_toy_outlined,
-          label: 'Bot Studio',
-          onTap: () {
-            Navigator.pop(context);
-            Navigator.pushNamed(context, '/bot_creator');
-          },
-        ),
-        _sheetTile(
-          icon: Icons.logout,
-          label: 'Log Out',
-          danger: true,
-          onTap: () async {
-            Navigator.pop(context);
-            await _confirmSignOut(context);
-          },
-        ),
-      ],
-    );
-  }
-
   void _showFlatSheet({
     required BuildContext context,
     required List<Widget> children,
@@ -1176,7 +1130,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: theme.brightness == Brightness.dark
-          ? const Color(0xFF1F1F1F)
+          ? const Color(0xFF1F2C34)
           : Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -1220,34 +1174,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
       onTap: onTap,
     );
   }
-
-  Future<void> _confirmSignOut(BuildContext context) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Log out?'),
-        content:
-            const Text('You will need to sign in again to use Luma Chat.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Log Out')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    if (!context.mounted) return;
-    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
-    try {
-      await auth.signOut();
-    } catch (_) {}
-    if (context.mounted) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false);
-    }
-  }
 }
 
 class _NavItem {
@@ -1256,10 +1182,4 @@ class _NavItem {
   final String label;
   const _NavItem(
       {required this.icon, required this.active, required this.label});
-}
-
-class _Folder {
-  final String label;
-  final int count;
-  const _Folder({required this.label, required this.count});
 }
