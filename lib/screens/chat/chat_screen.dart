@@ -4710,8 +4710,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final isViewOnce = message['view_once'] == true;
 
     final isDark = theme.brightness == Brightness.dark;
-    final mineBubble = isDark ? const Color(0xFF2B5278) : const Color(0xFFEFFDDE);
-    final otherBubble = isDark ? const Color(0xFF182533) : Colors.white;
+   final mineBubble = isDark ? const Color(0xFF005C4B) : const Color(0xFFEFFDDE);
+final otherBubble = isDark ? const Color(0xFF1F2C34) : Colors.white;
     final mineText = isDark ? Colors.white : Colors.black;
     final otherText = isDark ? Colors.white : Colors.black;
 
