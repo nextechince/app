@@ -18,15 +18,15 @@ class AppTheme {
   static const Color accentOrange = Color(0xFFE0954A);
   static const Color accentBlue = Color(0xFF3390EC);
 
-  // ─── Background Colors — Dark ───
-  static const Color bgPrimary = Color(0xFF212121);
-  static const Color bgSecondary = Color(0xFF1F1F1F);
-  static const Color bgTertiary = Color(0xFF2B2B2B);
-  static const Color bgElevated = Color(0xFF2B2B2B);
-  static const Color bgCard = Color(0xFF1F1F1F);
-  static const Color bgInput = Color(0xFF2A2A2A);
-  static const Color bgModal = Color(0xFF1F1F1F);
-  static const Color darkChatBg = Color(0xFF0E1621);
+  // ─── Background Colors — Dark (PURE BLACK / WhatsApp Style) ───
+  static const Color bgPrimary = Color(0xFF000000);       // Pure Black
+  static const Color bgSecondary = Color(0xFF0A0A0A);     // Very dark gray for app bars
+  static const Color bgTertiary = Color(0xFF141414);      // Slightly lighter for cards
+  static const Color bgElevated = Color(0xFF141414);      // Elevated elements
+  static const Color bgCard = Color(0xFF0A0A0A);          // Cards
+  static const Color bgInput = Color(0xFF141414);         // Input fields
+  static const Color bgModal = Color(0xFF0A0A0A);         // Bottom sheets/modals
+  static const Color darkChatBg = Color(0xFF000000);      // Chat background
 
   // ─── Background Colors — Light ───
   static const Color lightBg = Color(0xFFFFFFFF);
@@ -38,8 +38,8 @@ class AppTheme {
   // ─── Text — Dark theme ───
   static const Color textPrimary = Color(0xFFFFFFFF);
   static const Color textSecondary = Color(0xFFAAAAAA);
-  static const Color textTertiary = Color(0xFF707579);
-  static const Color textMuted = Color(0xFF5A5A5A);
+  static const Color textTertiary = Color(0xFF888888);
+  static const Color textMuted = Color(0xFF666666);
 
   // ─── Text — Light theme ───
   static const Color textLight = Color(0xFF000000);
@@ -51,11 +51,11 @@ class AppTheme {
   static const Color offline = Color(0xFF707579);
   static const Color typing = Color(0xFF3390EC);
 
-  // ─── Message Bubbles — Dark ───
-  static const Color sentMessage = Color(0xFF2B5278);
-  static const Color sentMessageLight = Color(0xFF2B5278);
-  static const Color receivedMessage = Color(0xFF182533);
-  static const Color receivedMessageLight = Color(0xFF182533);
+  // ─── Message Bubbles — Dark (WhatsApp style) ───
+  static const Color sentMessage = Color(0xFF005C4B); // WhatsApp Green/Dark
+  static const Color sentMessageLight = Color(0xFF005C4B); 
+  static const Color receivedMessage = Color(0xFF1F2C34); // Dark Gray
+  static const Color receivedMessageLight = Color(0xFF1F2C34);
 
   // ─── Message Bubbles — Light ───
   static const Color lightSentBubble = Color(0xFFEEFFDE);
@@ -77,15 +77,15 @@ class AppTheme {
   static const Color safe = Color(0xFF4FAE4F);
 
   // ─── Dividers ───
-  static const Color divider = Color(0xFF2F2F2F);
+  static const Color divider = Color(0xFF222222); // Dark subtle divider
   static const Color dividerLight = Color(0xFFE4E4E5);
 
-  // ─── Shadows — flat (API kept for compatibility) ───
+  // ─── Shadows — flat ───
   static List<BoxShadow> get cardShadow => const [];
   static List<BoxShadow> get elevatedShadow => const [];
 
   // ══════════════════════════════════════════════════════════════════════════
-  // LIGHT THEME — Telegram Day
+  // LIGHT THEME
   // ══════════════════════════════════════════════════════════════════════════
   static ThemeData get lightTheme {
     return ThemeData(
@@ -219,14 +219,14 @@ class AppTheme {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // DARK THEME — Telegram Night
+  // DARK THEME — PURE BLACK (WhatsApp Style)
   // ══════════════════════════════════════════════════════════════════════════
   static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       primaryColor: primaryColor,
-      scaffoldBackgroundColor: bgPrimary,
+      scaffoldBackgroundColor: bgPrimary, // Pure black
       dividerColor: divider,
 
       colorScheme: const ColorScheme.dark(
@@ -242,7 +242,7 @@ class AppTheme {
       ),
 
       appBarTheme: AppBarTheme(
-        backgroundColor: bgSecondary,
+        backgroundColor: bgSecondary, // Very dark gray for contrast
         foregroundColor: textPrimary,
         elevation: 0,
         scrolledUnderElevation: 0.5,
@@ -260,7 +260,7 @@ class AppTheme {
       ),
 
       cardTheme: CardTheme(
-        color: bgCard,
+        color: bgCard, // Dark cards
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
