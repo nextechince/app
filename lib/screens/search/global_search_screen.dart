@@ -126,8 +126,13 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   Future<void> _searchUsers(String query) async {
-    final trimmed = query.trim();
+    String trimmed = query.trim();
     if (trimmed.isEmpty) return;
+
+    // Silently handle '@' for usernames (Telegram style)
+    if (trimmed.startsWith('@')) {
+      trimmed = trimmed.substring(1);
+    }
 
     HapticFeedback.lightImpact();
 
@@ -146,9 +151,9 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       final searchTerm = trimmed.toLowerCase();
       final searchEnd = '$searchTerm\uf8ff';
 
-      // ── Users: search by username and display_name (2 queries) ──
       final results = <String, Map<String, dynamic>>{};
 
+      // 1. Search Username
       final usernameSnap = await firestore
           .collection('users')
           .where('username', isGreaterThanOrEqualTo: searchTerm)
@@ -162,6 +167,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         results[doc.id] = data;
       }
 
+      // 2. Search Display Name
       final displayNameSnap = await firestore
           .collection('users')
           .where('display_name', isGreaterThanOrEqualTo: searchTerm)
@@ -173,6 +179,22 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         final data = doc.data();
         data['id'] = doc.id;
         results[doc.id] = data;
+      }
+
+      // 3. Silently Search Phone Number (Exact Match)
+      // Users often type +123456789
+      if (RegExp(r'^\+?[0-9\s\-]+$').hasMatch(trimmed)) {
+        final phoneSnap = await firestore
+            .collection('users')
+            .where('phone_number', isEqualTo: trimmed)
+            .limit(5)
+            .get();
+
+        for (final doc in phoneSnap.docs) {
+          final data = doc.data();
+          data['id'] = doc.id;
+          results[doc.id] = data;
+        }
       }
 
       final filtered = results.values
@@ -240,7 +262,6 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
       final targetUserId = user['id'] as String;
 
-      // Check for existing direct chat
       final chatSnap = await firestore
           .collection('chats')
           .where('type', isEqualTo: 'direct')
@@ -274,7 +295,6 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         return;
       }
 
-      // Create new direct chat
       final chatRef = firestore.collection('chats').doc();
       final chatId = chatRef.id;
 
@@ -437,52 +457,68 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   bool _isUserOnline(String userId) => _onlineStatus[userId] ?? false;
 
   // ═══════════════════════════════════════════════════════════════════════
-  // BUILD
+  // BUILD (Telegram Style)
   // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Discover'),
         backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface),
+          onPressed: () => Navigator.pop(context),
+        ),
+        titleSpacing: 0,
+        title: Padding(
+          padding: const EdgeInsets.only(right: 16),
+          child: Container(
+            height: 40,
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF1F1F1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: TextField(
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              autofocus: true,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontSize: 16,
+              ),
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Search',
+                hintStyle: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  fontSize: 16,
+                ),
+                prefixIcon: Icon(
+                  Icons.search, 
+                  size: 20, 
+                  color: theme.colorScheme.onSurface.withOpacity(0.5)
+                ),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.close, size: 18, color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                        onPressed: _clearSearch,
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        ),
       ),
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            // Search bar
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: TextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                autofocus: true,
-                style: TextStyle(
-                  color: theme.colorScheme.onSurface,
-                  fontSize: 16,
-                ),
-                onChanged: _onSearchChanged,
-                decoration: InputDecoration(
-                  hintText: 'Search by username...',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: _clearSearch,
-                        )
-                      : null,
-                ),
-              ),
-            ),
-
-            // Body
-            Expanded(child: _buildBody(theme)),
-          ],
-        ),
+        child: _buildBody(theme),
       ),
     );
   }
@@ -619,7 +655,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       leading: Stack(
         children: [
           CircleAvatar(
-            radius: 26,
+            radius: 24,
             backgroundColor:
                 theme.colorScheme.primary.withOpacity(0.15),
             backgroundImage:
@@ -644,8 +680,8 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
               right: 0,
               bottom: 0,
               child: Container(
-                width: 14,
-                height: 14,
+                width: 12,
+                height: 12,
                 decoration: BoxDecoration(
                   color: const Color(0xFF4FAE4F),
                   shape: BoxShape.circle,
@@ -711,7 +747,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
     return ListTile(
       leading: CircleAvatar(
-        radius: 26,
+        radius: 24,
         backgroundColor:
             theme.colorScheme.primary.withOpacity(0.15),
         backgroundImage:
@@ -877,7 +913,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Search for people, groups, and channels',
+                  'Search for messages, people, groups, and channels',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface
