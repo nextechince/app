@@ -10,6 +10,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
 import '../../utils/verified_badge.dart';
 import '../../services/cloudinary_service.dart';
+// Make sure to import the premium screen we created!
+// Adjust the path if your file is in a different folder.
+import 'luma_premium_screen.dart'; 
 
 const String _cloudName = 'dn2mwp1lc';
 const String _uploadPreset = 'aura_chat';
@@ -498,34 +501,103 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // =========================================================================
+  // NEW LOGOUT FLOW (Card Style + Phone Verification)
+  // =========================================================================
   Future<void> _logOut() async {
+    final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
+
+    // 1. Beautiful Card Popup
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.get('log_out')),
-        content: const Text('Are you sure you want to log out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.get('cancel')),
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Theme.of(ctx).brightness == Brightness.dark 
+            ? const Color(0xFF1F2C34) 
+            : Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.logout, color: Colors.red, size: 32),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                AppLocalizations.get('log_out'),
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Are you sure you want to log out of Luma Chat?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(ctx).colorScheme.onSurface.withOpacity(0.6),
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Theme.of(ctx).dividerColor),
+                        ),
+                      ),
+                      child: Text(
+                        AppLocalizations.get('cancel'),
+                        style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('Log Out', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(AppLocalizations.get('log_out')),
-          ),
-        ],
+        ),
       ),
     );
 
-    if (confirmed == true) {
-      final authProvider =
-          Provider.of<LumaAuthProvider>(context, listen: false);
+    if (confirmed != true) return;
+
+    try {
+      // 2. Sign out
       await authProvider.signOut();
+
       if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+
+      // 3. Go to Phone Verification Screen (Make sure this route exists in your router!)
+      Navigator.pushNamedAndRemoveUntil(context, '/phone_verification', (route) => false);
+      
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to log out. Try again.')),
+      );
     }
   }
 
@@ -543,6 +615,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       (l) => l['code'] == AppLocalizations.currentLanguage,
       orElse: () => {'code': 'en', 'name': 'English'},
     );
+
+    // Dynamic Pricing for Luma Premium Banner
+    final countryCode = Localizations.localeOf(context).countryCode;
+    final premiumPriceText = countryCode == 'NG' ? '₦2,000/mo' : '\$4.99/mo';
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -670,6 +746,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onPressed: () {},
                         ),
                       ],
+                    ),
+                  ),
+
+                  // =================================================================
+                  // LUMA PREMIUM BANNER
+                  // =================================================================
+                  GestureDetector(
+                    onTap: () => Navigator.push(
+                      context, 
+                      MaterialPageRoute(builder: (_) => const LumaPremiumScreen())
+                    ),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF2B2B2B), Color(0xFF1A1A1A)],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFD4A73A), width: 1),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.stars, color: Color(0xFFD4A73A), size: 32),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Luma Premium',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                                Text(
+                                  'Get exclusive features • $premiumPriceText',
+                                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, color: Colors.white54),
+                        ],
+                      ),
                     ),
                   ),
 
