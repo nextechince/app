@@ -10,8 +10,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart'; // <-- Ensures RepaintBoundary works
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -95,6 +96,8 @@ class _ChatScreenState extends State<ChatScreen>
   final AudioPlayer _audioPlayer = AudioPlayer();
   final LocalRecorder _audioRecorder = LocalRecorder();
   final ImagePicker _picker = ImagePicker();
+  
+  final FlutterTts _tts = FlutterTts();
 
   String? _chatId;
   String? _chatName;
@@ -151,6 +154,11 @@ class _ChatScreenState extends State<ChatScreen>
   double _keyboardHeight = 300;
 
   bool _showScrollDown = false;
+
+  // Premium Variables
+  bool _isMePremium = false;
+  bool _handsFreeModeEnabled = false;
+  StreamSubscription? _premiumSubscription;
 
   static const Map<String, Map<String, dynamic>> _emojiCategories = {
     'recent': {
@@ -245,9 +253,16 @@ class _ChatScreenState extends State<ChatScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initAudioPlayer();
+    _initTts();
     _messageController.addListener(_onTextChanged);
     _scrollController.addListener(_onScroll);
     _messageFocusNode.addListener(_onFocusChange);
+  }
+
+  void _initTts() async {
+    await _tts.setLanguage("en-US");
+    await _tts.setSpeechRate(0.5);
+    await _tts.setPitch(1.0);
   }
 
   void _onFocusChange() {
@@ -314,6 +329,23 @@ class _ChatScreenState extends State<ChatScreen>
     _loadStickers();
     _setOnlineStatus();
     _loadWallpaper();
+    _listenToMyPremiumStatus();
+  }
+
+  void _listenToMyPremiumStatus() {
+    if (_currentUserId == null) return;
+    _premiumSubscription?.cancel();
+    _premiumSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(_currentUserId)
+        .snapshots()
+        .listen((doc) {
+      if (mounted && doc.exists) {
+        setState(() {
+          _isMePremium = doc.data()?['is_premium'] == true;
+        });
+      }
+    });
   }
 
   Future<void> _loadWallpaper() async {
@@ -572,6 +604,14 @@ class _ChatScreenState extends State<ChatScreen>
       final loaded = _filterDocs(snap.docs);
       await _fetchMissingUsers(_senderIdsOf(loaded));
       if (!mounted) return;
+      
+      if (_handsFreeModeEnabled && loaded.isNotEmpty) {
+        final newestMsg = loaded.first;
+        if (newestMsg['sender_id'] != _currentUserId && newestMsg['is_read'] != true) {
+           _speakIncomingMessage(newestMsg);
+        }
+      }
+
       setState(() {
         _messages = loaded;
         _isLoading = false;
@@ -579,6 +619,12 @@ class _ChatScreenState extends State<ChatScreen>
       _scrollToBottom();
       _markAsRead();
     });
+  }
+
+  Future<void> _speakIncomingMessage(Map<String, dynamic> msg) async {
+    final senderName = _userCache[msg['sender_id']]?['display_name'] ?? 'Someone';
+    final text = msg['text'] ?? msg['content'] ?? 'Sent an attachment';
+    await _tts.speak("$senderName says: $text");
   }
 
   Future<void> _fetchMissingUsers(Set<String> ids) async {
@@ -596,6 +642,7 @@ class _ChatScreenState extends State<ChatScreen>
           'avatar_url': u['avatar_url'],
           'email': u['email'],
           'is_verified': _isVerifiedEmail(u['email']),
+          'is_premium': u['is_premium'] == true,
         };
       }
     }
@@ -1053,6 +1100,31 @@ class _ChatScreenState extends State<ChatScreen>
     bool viewOnce = false,
   }) async {
     if (_currentUserId == null || _chatId == null) return;
+
+    final fileLength = await file.length();
+    final maxSize = _isMePremium ? (2 * 1024 * 1024 * 1024) : (15 * 1024 * 1024);
+    
+    if (fileLength > maxSize) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_isMePremium 
+                ? 'File is too large (Max 2GB)' 
+                : 'Upgrade to Luma Premium to send files larger than 15MB!'),
+            backgroundColor: Colors.redAccent,
+            action: SnackBarAction(
+              label: 'Upgrade',
+              textColor: Colors.white,
+              onPressed: () {
+                Navigator.pushNamed(context, '/premium'); 
+              },
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Row(children: [
@@ -1695,6 +1767,19 @@ class _ChatScreenState extends State<ChatScreen>
                             : FieldValue.arrayUnion([_currentUserId])
                       });
                     }),
+                    _menuTile(theme, Icons.record_voice_over, _handsFreeModeEnabled ? 'Disable Hands-Free' : 'Enable Hands-Free', () {
+                      Navigator.pop(ctx);
+                      if (!_isMePremium) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Upgrade to Premium to use Hands-Free Mode!')),
+                        );
+                        return;
+                      }
+                      setState(() => _handsFreeModeEnabled = !_handsFreeModeEnabled);
+                      if (_handsFreeModeEnabled) {
+                        _tts.speak("Hands free mode enabled.");
+                      }
+                    }),
                     _menuTile(theme, Icons.search, 'Search', () {
                       Navigator.pop(ctx);
                       setState(() => _isSearching = true);
@@ -1805,6 +1890,7 @@ class _ChatScreenState extends State<ChatScreen>
     _otherTypingHideTimer?.cancel();
     _typingTimer?.cancel();
     _recordingTimer?.cancel();
+    _premiumSubscription?.cancel();
     for (final v in _videoControllers.values) { v.dispose(); }
     final uid = _currentUserId;
     if (uid != null) {
@@ -1824,10 +1910,13 @@ class _ChatScreenState extends State<ChatScreen>
     final theme = Theme.of(context);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final panelOpen = _panelMode != null;
-    if (bottomInset > 0 && !panelOpen) _keyboardHeight = bottomInset;
+    
+    // Set the panel height to the full screen height minus the app bar and input bar
+    final screenHeight = MediaQuery.of(context).size.height;
+    final panelHeight = screenHeight - 60 - 70; // Adjust based on header/input heights
 
     return Scaffold(
-      resizeToAvoidBottomInset: !panelOpen,
+      resizeToAvoidBottomInset: !panelOpen, // Stop keyboard from pushing screen if panel is open
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: _isSearching ? _buildSearchAppBar(theme) : _buildHeader(theme),
       body: Stack(
@@ -1851,13 +1940,13 @@ class _ChatScreenState extends State<ChatScreen>
               if (_isRecording) _buildRecordingBar(theme),
               if (panelOpen)
                 SizedBox(
-                  height: _keyboardHeight > 0 ? _keyboardHeight : 300,
+                  height: panelHeight > 300 ? panelHeight : 300, // Ensure it covers full screen
                   child: _buildPickerPanel(theme),
                 ),
               _buildInputBar(theme),
             ],
           ),
-          if (_showScrollDown)
+          if (_showScrollDown && !panelOpen) // Hide scroll down when panel is open
             Positioned(
               bottom: 100,
               right: 16,
@@ -1884,6 +1973,7 @@ class _ChatScreenState extends State<ChatScreen>
   PreferredSizeWidget _buildHeader(ThemeData theme) {
     final displayName = _otherUserNickname ?? _chatName ?? 'Chat';
     final verified = _userCache[_otherUserId]?['is_verified'] == true;
+    final isPremium = _userCache[_otherUserId]?['is_premium'] == true;
     final isDark = theme.brightness == Brightness.dark;
     final headerBg = isDark ? const Color(0xFF17212B) : const Color(0xFF527DA3);
 
@@ -1993,6 +2083,10 @@ class _ChatScreenState extends State<ChatScreen>
                                   if (verified) ...[
                                     const SizedBox(width: 4),
                                     const Icon(Icons.verified, color: Color(0xFF6FB9F3), size: 14),
+                                  ],
+                                  if (isPremium) ...[
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.stars, color: Color(0xFFD4A73A), size: 14),
                                   ],
                                 ],
                               ),
@@ -2508,13 +2602,14 @@ class _ChatScreenState extends State<ChatScreen>
     setState(() {
       if (wasOpen) {
         _panelMode = null;
+        _messageFocusNode.requestFocus(); // Bring back keyboard
       } else {
         _panelMode = mode;
         _pickerTab = mode;
+        _messageFocusNode.unfocus(); // Hide keyboard
         if (mode == 'gif' && !_gifsLoaded) _loadGifs();
       }
     });
-    if (wasOpen) { _messageFocusNode.requestFocus(); } else { _messageFocusNode.unfocus(); }
   }
 
   Widget _buildPickerPanel(ThemeData theme) {
@@ -2543,9 +2638,14 @@ class _ChatScreenState extends State<ChatScreen>
             ),
             child: Row(
               children: [
-                _bottomTab(theme, 'emoji', 'Emoji'),
-                _bottomTab(theme, 'gif', 'GIFs'),
-                _bottomTab(theme, 'sticker', 'Stickers'),
+                // Keyboard Icon to close panel
+                IconButton(
+                  icon: Icon(Icons.keyboard, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                  onPressed: () => _togglePanel(_panelMode!), // Closes panel
+                ),
+                Expanded(child: _bottomTab(theme, 'emoji', 'Emoji')),
+                Expanded(child: _bottomTab(theme, 'gif', 'GIFs')),
+                Expanded(child: _bottomTab(theme, 'sticker', 'Stickers')),
               ],
             ),
           ),
@@ -2556,22 +2656,20 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _bottomTab(ThemeData theme, String tab, String label) {
     final active = _pickerTab == tab;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() { _pickerTab = tab; _panelMode = tab; });
-          if (tab == 'gif' && !_gifsLoaded) _loadGifs();
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: active ? const Color(0xFF3390EC) : Colors.transparent, width: 2)),
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: active ? const Color(0xFF3390EC) : theme.colorScheme.onSurface.withOpacity(0.5), fontSize: 13, fontWeight: FontWeight.w600),
-          ),
+    return GestureDetector(
+      onTap: () {
+        setState(() { _pickerTab = tab; _panelMode = tab; });
+        if (tab == 'gif' && !_gifsLoaded) _loadGifs();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: active ? const Color(0xFF3390EC) : Colors.transparent, width: 2)),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: active ? const Color(0xFF3390EC) : theme.colorScheme.onSurface.withOpacity(0.5), fontSize: 13, fontWeight: FontWeight.w600),
         ),
       ),
     );
@@ -4582,7 +4680,8 @@ class _MessageOptionsOverlay extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        for (final e in const ['👍', '❤️', '😂', '😍', '😢', '👆', '😁'])
+                        // PREMIUM REACTIONS LOGIC
+                        for (final e in const ['👍', '❤️', '😂', '😍', '😢', '👆', '😁', '🔥', '🎉', '🤯', '🙏', '💯', '👏', '🤩', '😡', '🥰'])
                           GestureDetector(
                             onTap: () => onReact(e),
                             child: Text(e, style: const TextStyle(fontSize: 26)),
@@ -4710,8 +4809,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final isViewOnce = message['view_once'] == true;
 
     final isDark = theme.brightness == Brightness.dark;
-   final mineBubble = isDark ? const Color(0xFF005C4B) : const Color(0xFFEFFDDE);
-final otherBubble = isDark ? const Color(0xFF1F2C34) : Colors.white;
+    final mineBubble = isDark ? const Color(0xFF005C4B) : const Color(0xFFEFFDDE);
+    final otherBubble = isDark ? const Color(0xFF1F2C34) : Colors.white;
     final mineText = isDark ? Colors.white : Colors.black;
     final otherText = isDark ? Colors.white : Colors.black;
 
