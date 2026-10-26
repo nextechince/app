@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
-import '../../providers/chat_provider.dart';
-import 'add_contact_screen.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -17,174 +15,223 @@ class ContactsScreen extends StatefulWidget {
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
-  bool _loading = true;
+  String? _currentUserId;
+  bool _isLoading = true;
   bool _permissionDenied = false;
-
-  final List<Map<String, dynamic>> _onLuma = [];
-  final List<Map<String, dynamic>> _toInvite = [];
+  List<Map<String, dynamic>> _lumaContacts = [];
+  List<Map<String, dynamic>> _inviteContacts = [];
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadContacts());
+    _currentUserId = Provider.of<LumaAuthProvider>(context, listen: false).user?.uid ??
+        Provider.of<LumaAuthProvider>(context, listen: false).mockUserId;
+    _loadContacts();
   }
 
-  String get _myUid {
-    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
-    return auth.currentUserId ?? auth.mockUserId ?? '';
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadContacts() async {
-    setState(() {
-      _loading = true;
-      _permissionDenied = false;
-    });
-
+    setState(() => _isLoading = true);
+    
     try {
+      // 1. Ask for permission
       final status = await Permission.contacts.request();
-      if (!status.isGranted) {
-        if (!mounted) return;
+      if (status.isDenied) {
         setState(() {
           _permissionDenied = true;
-          _loading = false;
+          _isLoading = false;
         });
         return;
       }
 
-      final contacts = await FlutterContacts.getContacts(
-        withProperties: true,
-        withPhoto: false,
-      );
+      // 2. Fetch phone contacts
+      final contacts = await FlutterContacts.getContacts(withProperties: true);
+      
+      // 3. Fetch Luma Users to match
+      final lumaUsersSnap = await FirebaseFirestore.instance.collection('users').get();
+      final lumaUsers = lumaUsersSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
 
-      final normalized = <String, Contact>{};
+      final matched = <Map<String, dynamic>>[];
+      final invites = <Map<String, dynamic>>[];
+      final Set<String> processedNumbers = {};
+
       for (final c in contacts) {
-        for (final phone in c.phones) {
-          final digits = phone.number.replaceAll(RegExp(r'\D'), '');
-          if (digits.length < 6) continue;
-          normalized['+$digits'] = c;
-        }
-      }
+        if (c.phones.isEmpty) continue;
+        
+        final phone = c.phones.first.number.replaceAll(RegExp(r'[^\d+]'), '');
+        if (processedNumbers.contains(phone)) continue;
+        processedNumbers.add(phone);
 
-      if (normalized.isEmpty) {
-        if (!mounted) return;
-        setState(() => _loading = false);
-        return;
-      }
+        final displayName = c.displayName ?? phone;
 
-      final keys = normalized.keys.toList();
-      final matchedUsers = <String, Map<String, dynamic>>{};
+        // Find if this phone exists in Luma Chat
+        final lumaUser = lumaUsers.firstWhere(
+          (u) => (u['phone_number'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '') == phone,
+          orElse: () => {},
+        );
 
-      for (var i = 0; i < keys.length; i += 30) {
-        final end = (i + 30 > keys.length) ? keys.length : i + 30;
-        final chunk = keys.sublist(i, end);
-
-        final snap = await FirebaseFirestore.instance
-            .collection('users')
-            .where('phone', whereIn: chunk)
-            .get();
-
-        for (final doc in snap.docs) {
-          final data = doc.data();
-          data['uid'] = doc.id;
-          final phone = data['phone'] as String?;
-          if (phone != null) matchedUsers[phone] = data;
-        }
-      }
-
-      final onLuma = <Map<String, dynamic>>[];
-      final toInvite = <Map<String, dynamic>>[];
-      final myUid = _myUid;
-
-      for (final entry in normalized.entries) {
-        final phone = entry.key;
-        final contact = entry.value;
-        final displayName = contact.displayName.isNotEmpty
-            ? contact.displayName
-            : phone;
-
-        final match = matchedUsers[phone];
-
-        if (match != null) {
-          if (match['uid'] == myUid) continue;
-          onLuma.add({
-            'uid': match['uid'],
+        if (lumaUser.isNotEmpty) {
+          matched.add({
+            'id': lumaUser['id'],
+            'name': lumaUser['display_name'] ?? displayName,
             'phone': phone,
-            'display_name':
-                match['display_name'] ?? match['username'] ?? displayName,
-            'username': match['username'] ?? '',
-            'avatar_url': match['avatar_url'],
+            'avatar_url': lumaUser['avatar_url'],
+            'is_on_luma': true,
           });
         } else {
-          toInvite.add({
+          invites.add({
+            'id': phone,
+            'name': displayName,
             'phone': phone,
-            'display_name': displayName,
+            'is_on_luma': false,
           });
         }
       }
 
-      onLuma.sort((a, b) => (a['display_name'] as String)
-          .toLowerCase()
-          .compareTo((b['display_name'] as String).toLowerCase()));
-      toInvite.sort((a, b) => (a['display_name'] as String)
-          .toLowerCase()
-          .compareTo((b['display_name'] as String).toLowerCase()));
-
-      if (!mounted) return;
-      setState(() {
-        _onLuma
-          ..clear()
-          ..addAll(onLuma);
-        _toInvite
-          ..clear()
-          ..addAll(toInvite);
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _lumaContacts = matched;
+          _inviteContacts = invites;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      debugPrint('Load contacts error: $e');
-      if (!mounted) return;
-      setState(() => _loading = false);
+      debugPrint('Contact load error: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _startChat(Map<String, dynamic> contact) async {
-    final uid = contact['uid'] as String?;
-    if (uid == null) return;
+  // ═══════════════════════════════════════════════════════════════════════
+  // NEW CONTACT MODAL
+  // ═══════════════════════════════════════════════════════════════════════
+  void _showNewContactSheet() {
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    bool isSaving = false;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final isDark = theme.brightness == Brightness.dark;
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF17212B) : Colors.white,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
+                    const SizedBox(height: 16),
+                    Text('New Contact', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+                    const SizedBox(height: 24),
+                    _buildInputField(theme, 'Contact Name', nameCtrl, Icons.person_outline),
+                    const SizedBox(height: 12),
+                    _buildInputField(theme, 'Phone Number', phoneCtrl, Icons.phone_outlined, keyboardType: TextInputType.phone),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: isSaving ? null : () async {
+                          if (phoneCtrl.text.trim().isEmpty) return;
+                          setState(() => isSaving = true);
+                          
+                          try {
+                            final phone = phoneCtrl.text.trim().replaceAll(RegExp(r'[^\d+]'), '');
+                            final name = nameCtrl.text.trim().isEmpty ? phone : nameCtrl.text.trim();
+                            
+                            // Just save to your app's contacts list
+                            await FirebaseFirestore.instance.collection('users').doc(_currentUserId).collection('contacts').add({
+                              'display_name': name,
+                              'phone_number': phone,
+                              'created_at': FieldValue.serverTimestamp(),
+                            });
+                            
+                            if (!mounted) return;
+                            Navigator.pop(ctx);
+                            _loadContacts();
+                          } finally {
+                            if (mounted) setState(() => isSaving = false);
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: theme.colorScheme.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text('Save Contact'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
-
-    final chat = await context.read<ChatProvider>().startDirectChat(uid);
-
-    if (!mounted) return;
-    Navigator.pop(context);
-
-    if (chat != null) {
-      Navigator.pushNamed(
-        context,
-        '/chat',
-        arguments: {
-          'chatId': chat['id'],
-          'chatName': contact['display_name'],
-          'chatAvatar': contact['avatar_url'],
-          'isGroup': false,
-          'otherUserId': uid,
-        },
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not start chat')),
-      );
-    }
   }
 
-  Future<void> _inviteContact(String phone) async {
-    await Clipboard.setData(ClipboardData(text: phone));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Phone copied: $phone')),
+  Widget _buildInputField(ThemeData theme, String hint, TextEditingController ctrl, IconData icon, {TextInputType? keyboardType}) {
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(color: isDark ? const Color(0xFF242F3D) : const Color(0xFFF1F1F1), borderRadius: BorderRadius.circular(12)),
+      child: TextField(
+        controller: ctrl,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: Icon(icon, color: theme.colorScheme.onSurface.withOpacity(0.5), size: 20),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        ),
+      ),
+    );
+  }
+
+  void _showNewGroupSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.group),
+              title: const Text('New Group'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/create_group');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.campaign),
+              title: const Text('New Channel'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/create_channel');
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -194,291 +241,107 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Contacts',
-                      style: theme.textTheme.titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    onPressed: () =>
-                        Navigator.pushNamed(context, '/global_search'),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: _loading ? null : _loadContacts,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(child: _buildBody(theme)),
-          ],
-        ),
+      appBar: AppBar(
+        title: const Text('Contacts'),
+        backgroundColor: theme.scaffoldBackgroundColor,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person_add_alt_1),
+            onPressed: _showNewContactSheet,
+          ),
+          PopupMenuButton<String>(
+            onSelected: (val) {
+              if (val == 'group') _showNewGroupSheet();
+              if (val == 'refresh') _loadContacts();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'group', child: Text('New Group / Channel')),
+              const PopupMenuItem(value: 'refresh', child: Text('Refresh')),
+            ],
+          ),
+        ],
       ),
-    );
-  }
-
-  Widget _buildBody(ThemeData theme) {
-    if (_loading) {
-      return Center(
-        child: CircularProgressIndicator(color: theme.colorScheme.primary),
-      );
-    }
-
-    if (_permissionDenied) return _permissionGate(theme);
-
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 96),
-      children: [
-        _actionTile(
-          theme,
-          icon: Icons.group_add_outlined,
-          label: 'New Group',
-          onTap: () => Navigator.pushNamed(context, '/create_group'),
-        ),
-        _actionTile(
-          theme,
-          icon: Icons.campaign_outlined,
-          label: 'New Channel',
-          onTap: () => Navigator.pushNamed(context, '/create_channel'),
-        ),
-        _actionTile(
-          theme,
-          icon: Icons.person_add_outlined,
-          label: 'New Chat',
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddContactScreen()),
-            );
-          },
-        ),
-        const SizedBox(height: 8),
-        Divider(height: 0.5, color: theme.dividerColor),
-        if (_onLuma.isNotEmpty) ...[
-          _sectionHeader(theme, 'ON LUMA CHAT', _onLuma.length),
-          ..._onLuma.map((c) => _contactTile(theme, c)),
-        ],
-        if (_toInvite.isNotEmpty) ...[
-          _sectionHeader(theme, 'INVITE', _toInvite.length),
-          ..._toInvite.map((c) => _inviteTile(theme, c)),
-        ],
-        if (_onLuma.isEmpty && _toInvite.isEmpty) ...[
-          const SizedBox(height: 60),
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.contacts_outlined,
-                    size: 64,
-                    color: theme.colorScheme.onSurface.withOpacity(0.15),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No contacts found',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Contacts from your phone will appear here.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
-                ],
+      body: Column(
+        children: [
+          // Search Bar
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
+              decoration: InputDecoration(
+                hintText: 'Search contacts...',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: theme.colorScheme.onSurface.withOpacity(0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
               ),
             ),
           ),
+          
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _permissionDenied
+                    ? Center(child: TextButton(onPressed: _loadContacts, child: const Text('Grant Permission')))
+                    : ListView(
+                        children: [
+                          if (_lumaContacts.isNotEmpty) ...[
+                            _sectionHeader(theme, 'ON LUMA CHAT'),
+                            ..._lumaContacts.where((c) => c['name'].toLowerCase().contains(_searchQuery)).map((c) => _contactTile(theme, c, true)),
+                          ],
+                          if (_inviteContacts.isNotEmpty) ...[
+                            _sectionHeader(theme, 'INVITE TO LUMA CHAT'),
+                            ..._inviteContacts.where((c) => c['name'].toLowerCase().contains(_searchQuery)).map((c) => _contactTile(theme, c, false)),
+                          ],
+                        ],
+                      ),
+          ),
         ],
-      ],
-    );
-  }
-
-  Widget _permissionGate(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.contacts_outlined,
-              size: 72,
-              color: theme.colorScheme.primary.withOpacity(0.4),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Contacts permission needed',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Luma Chat needs access to your phone contacts to find friends.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.6),
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _loadContacts,
-              child: const Text('Grant Permission'),
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => openAppSettings(),
-              child: const Text('Open Settings'),
-            ),
-          ],
-        ),
       ),
     );
   }
 
-  Widget _sectionHeader(ThemeData theme, String label, int count) {
+  Widget _sectionHeader(ThemeData theme, String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface.withOpacity(0.55),
-              letterSpacing: 0.6,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$count',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: theme.colorScheme.onSurface.withOpacity(0.4),
-            ),
-          ),
-        ],
+      child: Text(
+        title,
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.colorScheme.primary, letterSpacing: 1.1),
       ),
     );
   }
 
-  Widget _actionTile(
-    ThemeData theme, {
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primary.withOpacity(0.15),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: theme.colorScheme.primary, size: 22),
-      ),
-      title: Text(
-        label,
-        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-      ),
-      onTap: onTap,
-    );
-  }
-
-  Widget _contactTile(ThemeData theme, Map<String, dynamic> c) {
-    final name = c['display_name'] as String? ?? 'User';
-    final username = c['username'] as String? ?? '';
-    final avatar = c['avatar_url'] as String?;
-
+  Widget _contactTile(ThemeData theme, Map<String, dynamic> contact, bool isOnLuma) {
     return ListTile(
       leading: CircleAvatar(
-        radius: 24,
-        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
-        backgroundImage:
-            (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
-        child: (avatar == null || avatar.isEmpty)
-            ? Text(
-                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: TextStyle(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 18,
-                ),
-              )
-            : null,
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+        backgroundImage: isOnLuma && contact['avatar_url'] != null ? NetworkImage(contact['avatar_url']) : null,
+        child: !isOnLuma || contact['avatar_url'] == null ? Icon(Icons.person, color: theme.colorScheme.primary) : null,
       ),
-      title: Text(
-        name,
-        style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
-      ),
-      subtitle: username.isNotEmpty
-          ? Text(
-              '@$username',
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurface.withOpacity(0.5),
-              ),
-            )
-          : null,
-      onTap: () => _startChat(c),
-    );
-  }
-
-  Widget _inviteTile(ThemeData theme, Map<String, dynamic> c) {
-    final name = c['display_name'] as String? ?? 'Contact';
-    final phone = c['phone'] as String? ?? '';
-
-    return ListTile(
-      leading: CircleAvatar(
-        radius: 24,
-        backgroundColor: theme.colorScheme.onSurface.withOpacity(0.08),
-        child: Text(
-          name.isNotEmpty ? name[0].toUpperCase() : '?',
-          style: TextStyle(
-            color: theme.colorScheme.onSurface.withOpacity(0.6),
-            fontWeight: FontWeight.w600,
-            fontSize: 18,
-          ),
-        ),
-      ),
-      title: Text(
-        name,
-        style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
-      ),
-      subtitle: Text(
-        phone,
-        style: TextStyle(
-          fontSize: 13,
-          color: theme.colorScheme.onSurface.withOpacity(0.5),
-        ),
-      ),
-      trailing: TextButton(
-        onPressed: () => _inviteContact(phone),
-        child: Text(
-          'Invite',
-          style: TextStyle(
-            color: theme.colorScheme.primary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
+      title: Text(contact['name']),
+      subtitle: Text(contact['phone']),
+      trailing: isOnLuma
+          ? const Icon(Icons.chat_bubble_outline, size: 20)
+          : Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(20)),
+              child: const Text('Invite', style: TextStyle(color: Colors.white, fontSize: 12)),
+            ),
+      onTap: () {
+        if (isOnLuma) {
+          Navigator.pushNamed(context, '/chat', arguments: {
+            'chatName': contact['name'],
+            'chatAvatar': contact['avatar_url'],
+            'isGroup': false,
+            'otherUserId': contact['id'],
+          });
+        } else {
+          // Send invite link
+          final url = 'https://lumachat.app/invite?phone=${contact['phone']}';
+          launchUrl(Uri.parse(url));
+        }
+      },
     );
   }
 }
