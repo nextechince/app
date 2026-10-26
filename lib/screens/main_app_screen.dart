@@ -12,7 +12,7 @@ import '../providers/auth_provider.dart' show LumaAuthProvider;
 import '../providers/chat_provider.dart';
 import 'status/status_screen.dart';
 import 'settings/settings_screen.dart';
-import 'chats/archived_chats_screen.dart'; // We will create this
+import 'archive/archived_chats_screen.dart'; // We will create this
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({super.key});
