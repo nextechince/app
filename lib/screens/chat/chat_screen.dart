@@ -13,7 +13,7 @@ import '../providers/chat_provider.dart';
 import 'contacts/contacts_screen.dart'; // Ensure this exists
 import 'status/status_screen.dart';
 import 'settings/settings_screen.dart';
-import 'chats/archived_chats_screen.dart'; // Ensure this exists
+import 'archive/archived_chats_screen.dart'; // Ensure this exists
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({super.key});
