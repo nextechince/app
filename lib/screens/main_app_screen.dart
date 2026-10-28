@@ -10,9 +10,10 @@ import 'dart:convert';
 
 import '../providers/auth_provider.dart' show LumaAuthProvider;
 import '../providers/chat_provider.dart';
+import 'contacts/contacts_screen.dart'; // Ensure this exists
 import 'status/status_screen.dart';
 import 'settings/settings_screen.dart';
-import 'archive/archived_chats_screen.dart'; // We will create this
+import 'archive/archived_chats_screen.dart'; // Ensure this exists
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({super.key});
@@ -29,7 +30,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
   List<String> _myBlockedUsers = [];
   
   // Folder state
-  List<Map<String, dynamic>> _folders = []; // {id, name, chatIds: []}
+  List<Map<String, dynamic>> _folders = []; 
 
   @override
   void initState() {
@@ -38,7 +39,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
       final auth = Provider.of<LumaAuthProvider>(context, listen: false);
       final chat = Provider.of<ChatProvider>(context, listen: false);
       
-      // OFFLINE MODE: Load from local storage first
       _loadLocalChats(chat);
 
       if (auth.mockUserId != null) {
@@ -58,9 +58,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final prefs = await SharedPreferences.getInstance();
     final cached = prefs.getString('cached_chats');
     if (cached != null) {
-      final List<dynamic> decoded = jsonDecode(cached);
-      // Assuming your ChatProvider has a method to set chats directly
-      // chat.setCachedChats(decoded.cast<Map<String, dynamic>>());
+      // You can implement loading cached chats here if ChatProvider supports it
     }
   }
 
@@ -223,7 +221,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
           'avatar_url': d['avatar_url'],
           'email': d['email'],
           'is_bot': d['is_bot'] == true,
-          'is_premium': d['is_premium'] == true, // <-- PREMIUM BADGE
+          'is_premium': d['is_premium'] == true, 
         };
       }
     } finally {
@@ -274,13 +272,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
   Widget _buildBottomNav() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-
-    // REMOVED CONTACTS TAB
-    final items = const [
-      _NavItem(icon: Icons.chat_bubble_outline, active: Icons.chat_bubble, label: 'Chats'),
-      _NavItem(icon: Icons.donut_large_outlined, active: Icons.donut_large, label: 'Status'),
-      _NavItem(icon: Icons.settings_outlined, active: Icons.settings, label: 'Settings'),
-    ];
+    final auth = context.watch<LumaAuthProvider>();
+    final avatar = auth.userPhotoUrl;
 
     return Container(
       decoration: BoxDecoration(
@@ -292,33 +285,58 @@ class _MainAppScreenState extends State<MainAppScreen> {
         child: SizedBox(
           height: 56,
           child: Row(
-            children: List.generate(items.length, (i) {
-              final item = items[i];
-              final selected = i == _bottomIndex;
-              final color = selected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.5);
-
-              return Expanded(
-                child: InkWell(
-                  onTap: () => setState(() => _bottomIndex = i),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(selected ? item.active : item.icon, size: 24, color: color),
-                      const SizedBox(height: 2),
-                      Text(item.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color)),
-                    ],
-                  ),
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _bottomNavItem(icon: Icons.chat_bubble, label: 'Chats', index: 0),
+              _bottomNavItem(icon: Icons.donut_large, label: 'Status', index: 1),
+              _bottomNavItem(icon: Icons.settings, label: 'Settings', index: 2),
+              
+              // PROFILE TAB
+              GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/profile'),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+                      backgroundImage: (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
+                      child: (avatar == null || avatar.isEmpty) ? Icon(Icons.person, size: 14, color: theme.colorScheme.primary) : null,
+                    ),
+                    const SizedBox(height: 2),
+                    Text('Profile', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.5))),
+                  ],
                 ),
-              );
-            }),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  Widget _bottomNavItem({required IconData icon, required String label, required int index}) {
+    final theme = Theme.of(context);
+    final selected = index == _bottomIndex;
+    final color = selected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.5);
+
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _bottomIndex = index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 24, color: color),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
-  // FAB (NEW CHAT SHEET)
+  // FAB (NOW OPENS CONTACTS SCREEN)
   // ═══════════════════════════════════════════════════════════════════════
   Widget? _buildFAB() {
     if (_bottomIndex != 0) return null;
@@ -329,52 +347,11 @@ class _MainAppScreenState extends State<MainAppScreen> {
         foregroundColor: Colors.white,
         elevation: 3,
         shape: const CircleBorder(),
-        onPressed: () => _showNewChatOptions(context),
+        onPressed: () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen()));
+        },
         child: const Icon(Icons.add_comment, size: 26),
       ),
-    );
-  }
-
-  void _showNewChatOptions(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1F2C34) : Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _sheetTile(icon: Icons.person_add_alt_1_outlined, label: 'New Chat', onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/new_chat');
-              }),
-              _sheetTile(icon: Icons.group_add_outlined, label: 'New Group', onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/create_group');
-              }),
-              _sheetTile(icon: Icons.campaign_outlined, label: 'New Channel', onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/create_channel');
-              }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _sheetTile({required IconData icon, required String label, required VoidCallback onTap}) {
-    final theme = Theme.of(context);
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: theme.colorScheme.primary.withOpacity(0.1), shape: BoxShape.circle),
-        child: Icon(icon, color: theme.colorScheme.primary, size: 20),
-      ),
-      title: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-      onTap: onTap,
     );
   }
 
@@ -421,18 +398,17 @@ class _MainAppScreenState extends State<MainAppScreen> {
             icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
             onPressed: () => Navigator.pushNamed(context, '/global_search'),
           ),
-          // 3-DOT MENU WITH NEW CHANNEL & ARCHIVE
           PopupMenuButton<String>(
             color: isDark ? const Color(0xFF1F2C34) : Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             icon: Icon(Icons.more_vert, color: theme.colorScheme.onSurface),
             onSelected: (value) {
               if (value == 'new_channel') {
-                Navigator.pushNamed(context, '/create_channel'); // <-- FIXED: New Channel
+                Navigator.pushNamed(context, '/create_channel');
               } else if (value == 'archive') {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ArchivedChatsScreen()));
               } else if (value == 'settings') {
-                setState(() => _bottomIndex = 2); // Adjusted index
+                setState(() => _bottomIndex = 2);
               } else if (value == 'starred') {
                 Navigator.pushNamed(context, '/saved_messages');
               }
@@ -460,7 +436,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         children: [
-          // All Chats Pill
           GestureDetector(
             onTap: () => setState(() => _folderIndex = 0),
             child: Container(
@@ -484,7 +459,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
             ),
           ),
           
-          // Custom Folders
           ...List.generate(_folders.length, (i) {
             final folder = _folders[i];
             final selected = _folderIndex == i + 1;
@@ -516,7 +490,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
             );
           }),
 
-          // + Button
           GestureDetector(
             onTap: _showCreateFolderDialog,
             child: Container(
@@ -541,19 +514,16 @@ class _MainAppScreenState extends State<MainAppScreen> {
       builder: (context, chatProvider, _) {
         if (chatProvider.isLoading) return Center(child: CircularProgressIndicator(color: theme.colorScheme.primary));
         
-        // Save locally for offline mode
         _saveChatsLocally(chatProvider.chats);
 
         List<Map<String, dynamic>> visible = chatProvider.chats;
 
-        // Filter by Folder
         if (_folderIndex > 0) {
           final folder = _folders[_folderIndex - 1];
           final allowedIds = List<String>.from(folder['chatIds']);
           visible = visible.where((c) => allowedIds.contains(c['id'])).toList();
         }
 
-        // Filter Archived (Normally you filter these OUT of the main list)
         visible = visible.where((c) {
           final myUid = _myUid;
           final partsData = c['participants_data'] as Map<String, dynamic>? ?? {};
@@ -616,7 +586,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
       final cached = otherUserId.isNotEmpty ? _userCache[otherUserId] : null;
       name = cached?['display_name'] ?? 'Loading...';
       avatar = cached?['avatar_url'];
-      isPremium = cached?['is_premium'] == true; // <-- GET PREMIUM STATUS
+      isPremium = cached?['is_premium'] == true; 
     } else {
       name = (chat['name'] ?? chat['title'] ?? 'Unknown') as String;
       avatar = chat['avatar_url'] as String?;
@@ -674,7 +644,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   Row(
                     children: [
                       Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface))),
-                      // PREMIUM BADGE
                       if (isPremium) ...[
                         const SizedBox(width: 4),
                         const Icon(Icons.stars, size: 16, color: Color(0xFFD4A73A)),
@@ -733,8 +702,111 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  // ... (Context Menu and Archive Logic stay identical) ...
-  // I'll include the Archive logic here so you can copy it fully.
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHAT OPTIONS (LONG PRESS) - RESTORED
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _showChatContextMenu(
+    BuildContext context,
+    Map<String, dynamic> chat,
+    String chatId,
+    bool isDirect,
+    bool isGroup,
+    bool isChannel,
+    String? otherUserId,
+    bool isPinned,
+    bool isMuted,
+    bool isBlockedByMe,
+    bool isArchived,
+    String name,
+  ) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: isDark ? const Color(0xFF1F2C34) : Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(isPinned ? Icons.push_pin_outlined : Icons.push_pin),
+              title: Text(isPinned ? 'Unpin' : 'Pin'),
+              onTap: () => Navigator.pop(ctx, 'pin'),
+            ),
+            ListTile(
+              leading: Icon(isMuted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined),
+              title: Text(isMuted ? 'Unmute' : 'Mute'),
+              onTap: () => Navigator.pop(ctx, 'mute'),
+            ),
+            if (isDirect)
+              ListTile(
+                leading: Icon(isBlockedByMe ? Icons.block_flipped : Icons.block),
+                title: Text(isBlockedByMe ? 'Unblock' : 'Block'),
+                onTap: () => Navigator.pop(ctx, 'block'),
+              ),
+            ListTile(
+              leading: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined),
+              title: Text(isArchived ? 'Unarchive' : 'Archive'),
+              onTap: () => Navigator.pop(ctx, 'archive'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Add to Folder'),
+              onTap: () => Navigator.pop(ctx, 'folder'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Delete Chat', style: TextStyle(color: Colors.red)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (selected == null) return;
+    final provider = context.read<ChatProvider>();
+
+    switch (selected) {
+      case 'pin':
+        await provider.togglePinChat(chatId);
+        break;
+      case 'mute':
+        await _toggleMute(chatId, !isMuted);
+        break;
+      case 'block':
+        if (otherUserId != null && otherUserId.isNotEmpty) {
+          if (isBlockedByMe) {
+            await provider.unblockUser(otherUserId);
+          } else {
+            await provider.blockUser(otherUserId);
+          }
+        }
+        break;
+      case 'archive':
+        await _toggleArchive(chatId, isArchived);
+        break;
+      case 'folder':
+        _addChatToFolder(chatId);
+        break;
+      case 'delete':
+        await provider.deleteChat(chatId);
+        break;
+    }
+  }
+
+  Future<void> _toggleMute(String chatId, bool mute) async {
+    final myUid = _myUid;
+    try {
+      await FirebaseFirestore.instance.collection('chats').doc(chatId).update({
+        'muted_for': mute ? FieldValue.arrayUnion([myUid]) : FieldValue.arrayRemove([myUid]),
+      });
+      if (mounted) context.read<ChatProvider>().loadChats();
+    } catch (_) {}
+  }
+
   Future<void> _toggleArchive(String chatId, bool currentlyArchived) async {
     try {
       final provider = context.read<ChatProvider>();
@@ -745,13 +817,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
       }
     } catch (_) {}
   }
-
-  Future<void> _showChatContextMenu(BuildContext context, Map<String, dynamic> chat, String chatId, bool isDirect, bool isGroup, bool isChannel, String? otherUserId, bool isPinned, bool isMuted, bool isBlockedByMe, bool isArchived, String name) async {
-    // ... your existing context menu implementation ...
-    // Add "Add to folder" as an option here too if you want
-  }
-
-  Widget? _buildArchiveIcon() => null; // Placeholder
 }
 
 class _NavItem {
