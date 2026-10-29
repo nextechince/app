@@ -23,7 +23,7 @@ import '../../services/api_config.dart';
 import '../../services/cloudinary_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NATIVE RECORDER
+// NATIVE RECORDER (Talks directly to MainActivity.kt)
 // ═══════════════════════════════════════════════════════════════════════════
 class LocalRecorder {
   static const _channel = MethodChannel('com.lumachat.app/recorder');
