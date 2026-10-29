@@ -1,829 +1,500 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:uuid/uuid.dart';
 
-import '../providers/auth_provider.dart' show LumaAuthProvider;
-import '../providers/chat_provider.dart';
-import 'contacts/contacts_screen.dart'; // Ensure this exists
-import 'status/status_screen.dart';
-import 'settings/settings_screen.dart';
-import 'archive/archived_chats_screen.dart'; // Ensure this exists
+import '../../providers/auth_provider.dart' show LumaAuthProvider;
+import '../../services/api_config.dart'; 
+import '../../services/cloudinary_service.dart';
 
-class MainAppScreen extends StatefulWidget {
-  const MainAppScreen({super.key});
+class ChatScreen extends StatefulWidget {
+  final String? chatId;
+  final String? chatName;
+  final String? chatAvatar;
+  final String? otherUserId;
+
+  const ChatScreen({
+    super.key,
+    this.chatId,
+    this.chatName,
+    this.chatAvatar,
+    this.otherUserId,
+  });
 
   @override
-  State<MainAppScreen> createState() => _MainAppScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _MainAppScreenState extends State<MainAppScreen> {
-  int _bottomIndex = 0;
-  int _folderIndex = 0;
-  final Map<String, Map<String, dynamic>> _userCache = {};
-  final Set<String> _inFlight = {};
-  List<String> _myBlockedUsers = [];
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  final _messageController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _picker = ImagePicker();
+  final _audioPlayer = AudioPlayer();
 
-  // Folder state
-  List<Map<String, dynamic>> _folders = []; 
+  String? _currentUserId;
+  String? _wallpaperUrl;
+  bool _isMePremium = false;
+  bool _isRecording = false;
+  int _recordingSeconds = 0;
+  Timer? _recordingTimer;
+  
+  // Panel Toggle (Emoji/Keyboard)
+  bool _showEmojiPanel = false;
+  bool _isKeyboardOpen = false;
+
+  List<Map<String, dynamic>> _messages = [];
+  StreamSubscription? _messageSubscription;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final auth = Provider.of<LumaAuthProvider>(context, listen: false);
-      final chat = Provider.of<ChatProvider>(context, listen: false);
-      
-      _loadLocalChats(chat);
+    WidgetsBinding.instance.addObserver(this);
+    _initChat();
+  }
 
-      if (auth.mockUserId != null) {
-        chat.setMockUser(auth.mockUserId!);
-      } else {
-        chat.loadChats();
+  Future<void> _initChat() async {
+    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
+    _currentUserId = auth.user?.uid ?? auth.mockUserId;
+    if (_currentUserId == null || widget.chatId == null) return;
+
+    _loadWallpaper();
+    _listenToPremiumStatus();
+    _subscribeToMessages();
+  }
+
+  Future<void> _loadWallpaper() async {
+    final doc = await FirebaseFirestore.instance.collection('user_settings').doc(_currentUserId).get();
+    if (doc.exists && mounted) {
+      final walls = doc.data()?['chat_wallpapers'] as Map<String, dynamic>? ?? {};
+      setState(() => _wallpaperUrl = walls[widget.chatId] ?? doc.data()?['default_wallpaper']);
+    }
+  }
+
+  void _listenToPremiumStatus() {
+    FirebaseFirestore.instance.collection('users').doc(_currentUserId).snapshots().listen((doc) {
+      if (mounted && doc.exists) {
+        setState(() => _isMePremium = doc.data()?['is_premium'] == true);
       }
-      _listenToMyBlockedUsers();
-      _loadFolders();
     });
   }
 
-  Future<void> _loadLocalChats(ChatProvider chat) async {
-    final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString('cached_chats');
-    if (cached != null) {
-      // If your ChatProvider supports loading cached data, put it here
-      // final List<dynamic> decoded = jsonDecode(cached);
-    }
-  }
-
-  Future<void> _saveChatsLocally(List<Map<String, dynamic>> chats) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('cached_chats', jsonEncode(chats));
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // CUSTOM FOLDERS LOGIC
-  // ═══════════════════════════════════════════════════════════════════════
-  Future<void> _loadFolders() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('custom_folders');
-    if (saved != null) {
+  void _subscribeToMessages() {
+    _messageSubscription?.cancel();
+    _messageSubscription = FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId).collection('messages')
+        .orderBy('created_at', descending: true)
+        .limit(100)
+        .snapshots().listen((snap) {
+      if (!mounted) return;
+      final loaded = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
       setState(() {
-        _folders = List<Map<String, dynamic>>.from(jsonDecode(saved));
+        _messages = loaded;
+        _isLoading = false;
       });
-    }
+    });
   }
 
-  Future<void> _saveFolders() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('custom_folders', jsonEncode(_folders));
+  // ═══════════════════════════════════════════════════════════════════════
+  // REAL ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _sendText() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) return;
+    
+    _messageController.clear();
+    final msgId = const Uuid().v4();
+
+    await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+      'id': msgId,
+      'sender_id': _currentUserId,
+      'text': text,
+      'type': 'text',
+      'media_type': 'text',
+      'created_at': FieldValue.serverTimestamp(),
+      'is_read': false,
+    });
+
+    await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).update({
+      'last_message': text,
+      'last_message_at': FieldValue.serverTimestamp(),
+    });
   }
 
-  void _showCreateFolderDialog() {
-    final ctrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New Folder'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(hintText: 'Folder name...'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              final name = ctrl.text.trim();
-              if (name.isEmpty) return;
-              setState(() {
-                _folders.add({
-                  'id': DateTime.now().millisecondsSinceEpoch.toString(),
-                  'name': name,
-                  'chatIds': <String>[],
-                });
-              });
-              _saveFolders();
-              Navigator.pop(ctx);
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _pickAndSendMedia(String type) async {
+    final x = type == 'image' 
+        ? await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90) 
+        : await _picker.pickVideo(source: ImageSource.gallery);
+        
+    if (x == null) return;
+    final file = File(x.path);
+    final size = await file.length();
 
-  void _addChatToFolder(String chatId) {
-    if (_folders.isEmpty) {
-      _showCreateFolderDialog();
+    // 🚨 200MB Limit
+    final limitBytes = _isMePremium ? (5 * 1024 * 1024 * 1024) : (200 * 1024 * 1024); 
+    if (size > limitBytes) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isMePremium ? 'Max 5GB' : 'Upgrade to Premium to send files over 200MB!')));
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add to Folder'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: _folders.map((f) {
-            final isIn = (f['chatIds'] as List).contains(chatId);
-            return ListTile(
-              title: Text(f['name']),
-              trailing: Icon(isIn ? Icons.check_circle : Icons.circle_outlined, color: isIn ? Colors.green : Colors.grey),
-              onTap: () {
-                setState(() {
-                  if (isIn) {
-                    (f['chatIds'] as List).remove(chatId);
-                  } else {
-                    (f['chatIds'] as List).add(chatId);
-                  }
-                });
-                _saveFolders();
-                Navigator.pop(ctx);
-              },
-            );
-          }).toList(),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
-        ],
-      ),
-    );
-  }
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploading...')));
 
-  void _editFolder(int index) {
-    final ctrl = TextEditingController(text: _folders[index]['name']);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Folder'),
-        content: TextField(controller: ctrl),
-        actions: [
-          TextButton(
-            onPressed: () {
-              setState(() => _folders.removeAt(index));
-              _saveFolders();
-              Navigator.pop(ctx);
-            },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              setState(() => _folders[index]['name'] = ctrl.text.trim());
-              _saveFolders();
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
+    final url = type == 'image' 
+        ? await CloudinaryService.uploadImage(file, 'luma/chats') 
+        : await CloudinaryService.uploadVideo(file, 'luma/chats');
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // BLOCKED USERS & FETCHING
-  // ═══════════════════════════════════════════════════════════════════════
-  String get _myUid {
-    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
-    final fromProvider = auth.currentUserId ?? auth.mockUserId;
-    if (fromProvider != null && fromProvider.isNotEmpty) return fromProvider;
-    return FirebaseAuth.instance.currentUser?.uid ?? '';
-  }
-
-  void _listenToMyBlockedUsers() {
-    final uid = _myUid;
-    if (uid.isEmpty) return;
-    FirebaseFirestore.instance.collection('users').doc(uid).snapshots().listen((doc) {
-      if (!mounted || !doc.exists) return;
-      setState(() {
-        _myBlockedUsers = List<String>.from(doc.data()?['blocked_users'] ?? []);
+    if (url != null && mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      final msgId = const Uuid().v4();
+      await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+        'id': msgId,
+        'sender_id': _currentUserId,
+        'type': type,
+        'media_type': type,
+        'media_url': url,
+        'created_at': FieldValue.serverTimestamp(),
       });
-    });
-  }
-
-  Future<void> _fetchOtherUser(String uid) async {
-    if (uid.isEmpty || _userCache.containsKey(uid) || _inFlight.contains(uid)) return;
-    _inFlight.add(uid);
-    try {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-      if (doc.exists && doc.data() != null) {
-        final d = doc.data()!;
-        _userCache[uid] = {
-          'uid': uid,
-          'username': (d['username'] ?? '') as String,
-          'display_name': (d['display_name'] ?? d['username'] ?? d['name'] ?? 'Unknown') as String,
-          'avatar_url': d['avatar_url'],
-          'email': d['email'],
-          'is_bot': d['is_bot'] == true,
-          'is_premium': d['is_premium'] == true, 
-        };
-      }
-    } finally {
-      if (mounted) setState(() {});
-      _inFlight.remove(uid);
     }
   }
 
-  String _formatChatTime(dynamic lastMessageAt) {
-    if (lastMessageAt == null) return '';
-    DateTime dt = lastMessageAt is Timestamp ? lastMessageAt.toDate() : DateTime.now();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final msgDay = DateTime(dt.year, dt.month, dt.day);
-    final diffDays = today.difference(msgDay).inDays;
-    if (diffDays == 0) return DateFormat('HH:mm').format(dt);
-    if (diffDays == 1) return 'Yesterday';
-    if (diffDays < 7) return DateFormat('EEE').format(dt);
-    return DateFormat('MM/dd/yy').format(dt);
+  void _toggleEmojiPanel() {
+    if (_showEmojiPanel) {
+      setState(() => _showEmojiPanel = false);
+      SystemChannels.textInput.invokeMethod('TextInput.show');
+    } else {
+      FocusScope.of(context).unfocus();
+      setState(() => _showEmojiPanel = true);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // BUILD
+  // AI ACTIONS
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _processAiAction(String action, String text) async {
+    if (!_isMePremium) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upgrade to Premium to use AI tools!')));
+      return;
+    }
+
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    
+    try {
+      final model = GenerativeModel(model: 'gemini-pro', apiKey: ApiConfig.geminiApiKey);
+      final prompt = action == 'summarize' 
+          ? 'Summarize this message: "$text"' 
+          : 'Translate this to English: "$text"';
+          
+      final response = await model.generateContent([Content.text(prompt)]);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        showDialog(context: context, builder: (_) => AlertDialog(title: Text(action.toUpperCase()), content: Text(response.text ?? 'No response'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))]));
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('AI Error: $e')));
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // UI BUILD (Exact Telegram Style from Images)
   // ═══════════════════════════════════════════════════════════════════════
   @override
+  void dispose() {
+    _messageSubscription?.cancel();
+    _messageController.dispose();
+    _scrollController.dispose();
+    _audioPlayer.dispose();
+    _recordingTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) {
-        if (!didPop) SystemNavigator.pop();
-      },
-      child: Scaffold(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: IndexedStack(
-          index: _bottomIndex,
-          children: [
-            _buildChatsTab(),
-            const StatusScreen(),
-            const SettingsScreen(),
-            const ContactsScreen(), // <-- Profile screen logic, handled by bottom nav
-          ],
-        ),
-        floatingActionButton: _buildFAB(),
-        bottomNavigationBar: _buildBottomNav(),
-      ),
-    );
-  }
-
-  Widget _buildBottomNav() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final auth = context.watch<LumaAuthProvider>();
-    final avatar = auth.userPhotoUrl;
 
-    // Custom bottom nav to include the profile picture
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF000000) : Colors.white,
-        border: Border(top: BorderSide(color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE4E4E5), width: 0.5)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _bottomNavItem(icon: Icons.chat_bubble, label: 'Chats', index: 0),
-              _bottomNavItem(icon: Icons.donut_large, label: 'Status', index: 1),
-              _bottomNavItem(icon: Icons.settings, label: 'Settings', index: 2),
-              
-              // PROFILE TAB (User Avatar)
-              GestureDetector(
-                onTap: () => Navigator.pushNamed(context, '/profile'),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircleAvatar(
-                      radius: 12,
-                      backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
-                      backgroundImage: (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
-                      child: (avatar == null || avatar.isEmpty) ? Icon(Icons.person, size: 14, color: theme.colorScheme.primary) : null,
+    // Detect keyboard open/close
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    if (bottomInset > 0 && _showEmojiPanel) {
+      setState(() => _showEmojiPanel = false);
+    }
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(60),
+        child: Container(
+          color: isDark ? const Color(0xFF17212B) : const Color(0xFF527DA3),
+          child: SafeArea(
+            child: Row(
+              children: [
+                _headerCircle(icon: Icons.arrow_back, onTap: () => Navigator.pop(context)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(20)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(widget.chatName ?? 'Chat', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                        const Text('online', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text('Profile', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withOpacity(0.5))),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _bottomNavItem({required IconData icon, required String label, required int index}) {
-    final theme = Theme.of(context);
-    final selected = index == _bottomIndex;
-    final color = selected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.5);
-
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _bottomIndex = index),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 24, color: color),
-            const SizedBox(height: 2),
-            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // FAB (NOW OPENS CONTACTS SCREEN)
-  // ═══════════════════════════════════════════════════════════════════════
-  Widget? _buildFAB() {
-    if (_bottomIndex != 0) return null;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0, right: 8.0),
-      child: FloatingActionButton(
-        backgroundColor: const Color(0xFF3390EC),
-        foregroundColor: Colors.white,
-        elevation: 3,
-        shape: const CircleBorder(),
-        onPressed: () {
-          // THIS OPENS THE CONTACTS SCREEN DIRECTLY NOW
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen()));
-        },
-        child: const Icon(Icons.add_comment, size: 26),
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // CHATS TAB & FOLDERS
-  // ═══════════════════════════════════════════════════════════════════════
-  Widget _buildChatsTab() {
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          _buildChatsAppBar(),
-          _buildFolderPills(),
-          Expanded(child: _buildChatsList()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatsAppBar() {
-    final theme = Theme.of(context);
-    final auth = context.watch<LumaAuthProvider>();
-    final avatar = auth.userPhotoUrl;
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => Navigator.pushNamed(context, '/profile'),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
-              backgroundImage: (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
-              child: (avatar == null || avatar.isEmpty) ? Icon(Icons.person, size: 20, color: theme.colorScheme.primary) : null,
+                const SizedBox(width: 4),
+                _headerCircle(icon: Icons.call, onTap: () {}),
+                _headerCircle(icon: Icons.more_vert, onTap: () {}),
+              ],
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text('Luma Chat', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface)),
-          ),
-          IconButton(
-            icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
-            onPressed: () => Navigator.pushNamed(context, '/global_search'),
-          ),
-          PopupMenuButton<String>(
-            color: isDark ? const Color(0xFF1F2C34) : Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            icon: Icon(Icons.more_vert, color: theme.colorScheme.onSurface),
-            onSelected: (value) {
-              if (value == 'new_channel') {
-                Navigator.pushNamed(context, '/create_channel');
-              } else if (value == 'archive') {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const ArchivedChatsScreen()));
-              } else if (value == 'settings') {
-                setState(() => _bottomIndex = 2);
-              } else if (value == 'starred') {
-                Navigator.pushNamed(context, '/saved_messages');
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'new_channel', child: Text('New channel', style: TextStyle(fontSize: 15))),
-              const PopupMenuItem(value: 'archive', child: Text('Archived chats', style: TextStyle(fontSize: 15))),
-              const PopupMenuItem(value: 'starred', child: Text('Starred messages', style: TextStyle(fontSize: 15))),
-              const PopupMenuItem(value: 'settings', child: Text('Settings', style: TextStyle(fontSize: 15))),
-            ],
-          ),
-        ],
+        ),
       ),
-    );
-  }
-
-  Widget _buildFolderPills() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final chats = context.watch<ChatProvider>().chats;
-
-    return SizedBox(
-      height: 44,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      body: Column(
         children: [
-          GestureDetector(
-            onTap: () => setState(() => _folderIndex = 0),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: _folderIndex == 0 ? (isDark ? const Color(0xFF2A3A52) : const Color(0xFFE8EDF2)) : Colors.transparent,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('All Chats', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface)),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: _folderIndex == 0 ? theme.colorScheme.primary : Colors.grey, borderRadius: BorderRadius.circular(10)),
-                    child: Text('${chats.length}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-                  ),
-                ],
-              ),
+          Expanded(
+            child: Stack(
+              children: [
+                if (_wallpaperUrl != null)
+                  Positioned.fill(child: Image.network(_wallpaperUrl!, fit: BoxFit.cover, opacity: const AlwaysStoppedAnimation(0.3))),
+                _isLoading 
+                    ? const Center(child: CircularProgressIndicator()) 
+                    : ListView.builder(
+                        controller: _scrollController,
+                        reverse: true,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, i) => _buildMessageBubble(_messages[i], isDark),
+                      ),
+              ],
             ),
           ),
           
-          ...List.generate(_folders.length, (i) {
-            final folder = _folders[i];
-            final selected = _folderIndex == i + 1;
-            final count = (folder['chatIds'] as List).length;
-
-            return GestureDetector(
-              onTap: () => setState(() => _folderIndex = i + 1),
-              onLongPress: () => _editFolder(i),
-              child: Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: selected ? (isDark ? const Color(0xFF2A3A52) : const Color(0xFFE8EDF2)) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(folder['name'], style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface)),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: selected ? theme.colorScheme.primary : Colors.grey, borderRadius: BorderRadius.circular(10)),
-                      child: Text('$count', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+          // 🟢 THE EXACT TELEGRAM INPUT BAR FROM THE IMAGE 🟢
+          Container(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            color: isDark ? const Color(0xFF17212B) : const Color(0xFFF0F0F0),
+            child: SafeArea(
+              top: false,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Keyboard / Emoji Icon
+                  IconButton(
+                    icon: Icon(
+                      _showEmojiPanel ? Icons.keyboard : Icons.emoji_emotions_outlined,
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
                     ),
-                  ],
-                ),
+                    onPressed: _toggleEmojiPanel,
+                  ),
+                  
+                  // Text Input field with Clip & Camera inside
+                  Expanded(
+                    child: Container(
+                      constraints: const BoxConstraints(maxHeight: 120),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF242F3D) : Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _messageController,
+                              minLines: 1,
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              style: TextStyle(color: theme.colorScheme.onSurface, fontSize: 15),
+                              decoration: InputDecoration(
+                                hintText: 'Message',
+                                hintStyle: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.4), fontSize: 15),
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                              onTap: () {
+                                if (_showEmojiPanel) setState(() => _showEmojiPanel = false);
+                              },
+                            ),
+                          ),
+                          // Clip Icon
+                          IconButton(
+                            icon: Icon(Icons.attach_file, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                            onPressed: () {},
+                          ),
+                          // Camera Icon
+                          IconButton(
+                            icon: Icon(Icons.camera_alt_outlined, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                            onPressed: () => _pickAndSendMedia('image'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  
+                  const SizedBox(width: 8),
+                  
+                  // Separate Circular Mic / Send Button
+                  GestureDetector(
+                    onTap: _messageController.text.trim().isEmpty ? null : _sendText,
+                    child: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: const Color(0xFF3390EC),
+                      child: Icon(
+                        _messageController.text.trim().isEmpty ? Icons.mic : Icons.send,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            );
-          }),
-
-          GestureDetector(
-            onTap: _showCreateFolderDialog,
-            child: Container(
-              margin: const EdgeInsets.only(left: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF1F1F1),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Icon(Icons.add, size: 20, color: theme.colorScheme.onSurface.withOpacity(0.6)),
             ),
           ),
+
+          // 🟢 THE EXACT TELEGRAM EMOJI PANEL FROM THE IMAGE 🟢
+          if (_showEmojiPanel)
+            SizedBox(
+              height: 300, // Adjust height as needed
+              child: EmojiPicker(
+                onEmojiSelected: (category, emoji) {
+                  _messageController.text += emoji.emoji;
+                },
+                onBackspacePressed: () {
+                  if (_messageController.text.isNotEmpty) {
+                    _messageController.text = _messageController.text.substring(0, _messageController.text.length - 1);
+                  }
+                },
+                config: Config(
+                  height: 300,
+                  checkPlatformCompatibility: true,
+                  emojiViewConfig: EmojiViewConfig(
+                    backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+                    columns: 8,
+                    emojiSizeMax: 28,
+                  ),
+                  categoryViewConfig: CategoryViewConfig(
+                    backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+                    indicatorColor: const Color(0xFF3390EC),
+                    iconColor: theme.colorScheme.onSurface.withOpacity(0.5),
+                    iconColorSelected: const Color(0xFF3390EC),
+                  ),
+                  bottomActionBarConfig: BottomActionBarConfig(
+                    backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+                    buttonColor: theme.colorScheme.onSurface.withOpacity(0.1),
+                    buttonIconColor: theme.colorScheme.onSurface,
+                  ),
+                  searchViewConfig: SearchViewConfig(
+                    backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+                    buttonIconColor: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildChatsList() {
-    final theme = Theme.of(context);
-    return Consumer<ChatProvider>(
-      builder: (context, chatProvider, _) {
-        if (chatProvider.isLoading) return Center(child: CircularProgressIndicator(color: theme.colorScheme.primary));
-        
-        _saveChatsLocally(chatProvider.chats);
-
-        List<Map<String, dynamic>> visible = chatProvider.chats;
-
-        if (_folderIndex > 0) {
-          final folder = _folders[_folderIndex - 1];
-          final allowedIds = List<String>.from(folder['chatIds']);
-          visible = visible.where((c) => allowedIds.contains(c['id'])).toList();
-        }
-
-        visible = visible.where((c) {
-          final myUid = _myUid;
-          final partsData = c['participants_data'] as Map<String, dynamic>? ?? {};
-          final myData = partsData[myUid] as Map<String, dynamic>? ?? {};
-          return myData['is_archived'] != true;
-        }).toList();
-
-        if (visible.isEmpty) return _buildEmptyState();
-        return ListView.builder(
-          padding: const EdgeInsets.only(top: 4, bottom: 96),
-          itemCount: visible.length,
-          itemBuilder: (context, i) => _buildChatTile(visible[i]),
-        );
-      },
-    );
-  }
-
-  Widget _buildEmptyState() {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 72, color: theme.colorScheme.onSurface.withOpacity(0.15)),
-            const SizedBox(height: 16),
-            Text('No chats yet', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            Text('Start a conversation by tapping the chat button.', textAlign: TextAlign.center, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withOpacity(0.5))),
-          ],
+  Widget _headerCircle({required IconData icon, required VoidCallback onTap}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: Colors.black12,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(width: 40, height: 40, child: Icon(icon, color: Colors.white, size: 20)),
         ),
       ),
     );
   }
 
-  Widget _buildChatTile(Map<String, dynamic> chat) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+  Widget _buildMessageBubble(Map<String, dynamic> msg, bool isDark) {
+    final isMe = msg['sender_id'] == _currentUserId;
+    final type = msg['media_type'] ?? 'text';
+    final text = msg['text'] ?? '';
+    final mediaUrl = msg['media_url'];
 
-    final chatId = chat['id'] as String? ?? '';
-    final chatType = chat['type'] as String? ?? 'direct';
-    final isGroup = chatType == 'group';
-    final isChannel = chatType == 'channel';
-    final isBot = chatType == 'bot' || chat['is_bot'] == true;
-    final isDirect = chatType == 'direct';
-    final myUid = _myUid;
-
-    String name;
-    String? avatar;
-    String? otherUserId;
-    bool isPremium = false;
-
-    if (isDirect) {
-      final participants = List<String>.from(chat['participants'] ?? []);
-      otherUserId = participants.firstWhere((id) => id != myUid, orElse: () => '');
-      if (otherUserId.isNotEmpty && !_userCache.containsKey(otherUserId)) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _fetchOtherUser(otherUserId!));
-      }
-      final cached = otherUserId.isNotEmpty ? _userCache[otherUserId] : null;
-      name = cached?['display_name'] ?? 'Loading...';
-      avatar = cached?['avatar_url'];
-      isPremium = cached?['is_premium'] == true; 
-    } else {
-      name = (chat['name'] ?? chat['title'] ?? 'Unknown') as String;
-      avatar = chat['avatar_url'] as String?;
-    }
-
-    final lastMessage = chat['last_message'] ?? '';
-    final unread = (chat['unread_count'] as num?)?.toInt() ?? 0;
-    final isPinned = chat['is_pinned'] == true;
-    final participantsData = chat['participants_data'] as Map<String, dynamic>? ?? {};
-    final myData = participantsData[myUid] as Map<String, dynamic>? ?? {};
-    final isArchived = myData['is_archived'] == true;
-    final mutedFor = List<String>.from(chat['muted_for'] ?? []);
-    final isMuted = mutedFor.contains(myUid);
-    final isBlockedByMe = isDirect && otherUserId != null && otherUserId.isNotEmpty && _myBlockedUsers.contains(otherUserId);
-
-    final route = isChannel ? '/channel' : '/chat';
-    final routeArgs = isChannel
-        ? {'channelId': chatId, 'channelName': name}
-        : {'chatId': chatId, 'chatName': name, 'chatAvatar': avatar, 'isGroup': isGroup, 'otherUserId': otherUserId};
-
-    final isSticker = lastMessage.toString().toLowerCase().contains('sticker');
-    final previewText = isBlockedByMe ? 'Blocked' : isSticker ? '🌟 Sticker' : lastMessage;
-
-    final tile = InkWell(
-      onTap: () => Navigator.pushNamed(context, route, arguments: routeArgs),
-      onLongPress: () => _showChatContextMenu(context, chat, chatId, isDirect, isGroup, isChannel, otherUserId, isPinned, isMuted, isBlockedByMe, isArchived, name),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 27,
-                  backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
-                  backgroundImage: (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
-                  child: (avatar == null || avatar.isEmpty) ? Icon(isChannel ? Icons.campaign : isGroup ? Icons.group : isBot ? Icons.smart_toy : Icons.person, color: theme.colorScheme.primary, size: 24) : null,
-                ),
-                if (isChannel)
-                  Positioned(
-                    right: 0, bottom: 0,
-                    child: Container(
-                      width: 18, height: 18,
-                      decoration: BoxDecoration(color: theme.colorScheme.primary, shape: BoxShape.circle, border: Border.all(color: isDark ? const Color(0xFF000000) : Colors.white, width: 2)),
-                      child: const Icon(Icons.check, size: 10, color: Colors.white),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onLongPress: () {
+          showModalBottomSheet(
+            context: context,
+            builder: (_) => SafeArea(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
+                  if (_isMePremium) ...[
+                    ListTile(leading: const Icon(Icons.summarize), title: const Text('Summarize (AI)'), onTap: () { Navigator.pop(context); _processAiAction('summarize', text); }),
+                    ListTile(leading: const Icon(Icons.translate), title: const Text('Translate (AI)'), onTap: () { Navigator.pop(context); _processAiAction('translate', text); }),
+                  ] else
+                    ListTile(leading: const Icon(Icons.lock), title: const Text('Upgrade to Premium for AI'), onTap: () => Navigator.pop(context)),
+                  ListTile(leading: const Icon(Icons.copy), title: const Text('Copy'), onTap: () { Clipboard.setData(ClipboardData(text: text)); Navigator.pop(context); }),
+                ],
+              ),
+            ),
+          );
+        },
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+          decoration: BoxDecoration(
+            color: isMe ? (isDark ? const Color(0xFF005C4B) : const Color(0xFFEFFDDE)) : (isDark ? const Color(0xFF1F2C34) : Colors.white),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (type == 'image' && mediaUrl != null)
+                GestureDetector(
+                  onTap: () {},
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface))),
-                      if (isPremium) ...[
-                        const SizedBox(width: 4),
-                        const Icon(Icons.stars, size: 16, color: Color(0xFFD4A73A)),
-                      ],
-                      if (isMuted) ...[const SizedBox(width: 4), Icon(Icons.notifications_off, size: 14, color: theme.colorScheme.onSurface.withOpacity(0.4))],
-                      if (isPinned) ...[const SizedBox(width: 4), Icon(Icons.push_pin, size: 14, color: theme.colorScheme.onSurface.withOpacity(0.4))],
+                      CachedNetworkImage(imageUrl: mediaUrl, width: 200, fit: BoxFit.cover),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                        child: const Icon(Icons.download, color: Colors.white),
+                      )
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(previewText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, color: unread > 0 ? theme.colorScheme.onSurface.withOpacity(0.75) : theme.colorScheme.onSurface.withOpacity(0.55))),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(_formatChatTime(chat['last_message_at']), style: TextStyle(fontSize: 12, color: unread > 0 ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.4))),
-                if (unread > 0) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(11)),
-                    child: Text('$unread', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-                  ),
-                ],
-              ],
-            ),
-          ],
+                ),
+              if (text.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(text, style: TextStyle(color: isMe && isDark ? Colors.white : Colors.black)),
+                ),
+            ],
+          ),
         ),
       ),
     );
-
-    return Slidable(
-      key: ValueKey(chatId),
-      endActionPane: ActionPane(
-        motion: const DrawerMotion(),
-        extentRatio: 0.5,
-        children: [
-          SlidableAction(
-            onPressed: (_) => _addChatToFolder(chatId),
-            backgroundColor: const Color(0xFF4FAE4F),
-            foregroundColor: Colors.white,
-            icon: Icons.folder,
-            label: 'Folder',
-          ),
-          SlidableAction(
-            onPressed: (_) => _toggleArchive(chatId, isArchived),
-            backgroundColor: theme.colorScheme.primary,
-            foregroundColor: Colors.white,
-            icon: Icons.archive_outlined,
-            label: 'Archive',
-          ),
-        ],
-      ),
-      child: tile,
-    );
   }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // CHAT OPTIONS (LONG PRESS)
-  // ═══════════════════════════════════════════════════════════════════════
-  Future<void> _showChatContextMenu(
-    BuildContext context,
-    Map<String, dynamic> chat,
-    String chatId,
-    bool isDirect,
-    bool isGroup,
-    bool isChannel,
-    String? otherUserId,
-    bool isPinned,
-    bool isMuted,
-    bool isBlockedByMe,
-    bool isArchived,
-    String name,
-  ) async {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    
-    // Shows the exact menu you had before
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1F2C34) : Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(isPinned ? Icons.push_pin_outlined : Icons.push_pin),
-              title: Text(isPinned ? 'Unpin' : 'Pin'),
-              onTap: () => Navigator.pop(ctx, 'pin'),
-            ),
-            ListTile(
-              leading: Icon(isMuted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined),
-              title: Text(isMuted ? 'Unmute' : 'Mute'),
-              onTap: () => Navigator.pop(ctx, 'mute'),
-            ),
-            if (isDirect)
-              ListTile(
-                leading: Icon(isBlockedByMe ? Icons.block_flipped : Icons.block),
-                title: Text(isBlockedByMe ? 'Unblock' : 'Block'),
-                onTap: () => Navigator.pop(ctx, 'block'),
-              ),
-            ListTile(
-              leading: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined),
-              title: Text(isArchived ? 'Unarchive' : 'Archive'),
-              onTap: () => Navigator.pop(ctx, 'archive'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Add to Folder'),
-              onTap: () => Navigator.pop(ctx, 'folder'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Delete Chat', style: TextStyle(color: Colors.red)),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (selected == null) return;
-    final provider = context.read<ChatProvider>();
-
-    switch (selected) {
-      case 'pin':
-        await provider.togglePinChat(chatId);
-        break;
-      case 'mute':
-        await _toggleMute(chatId, !isMuted);
-        break;
-      case 'block':
-        if (otherUserId != null && otherUserId.isNotEmpty) {
-          if (isBlockedByMe) {
-            await provider.unblockUser(otherUserId);
-          } else {
-            await provider.blockUser(otherUserId);
-          }
-        }
-        break;
-      case 'archive':
-        await _toggleArchive(chatId, isArchived);
-        break;
-      case 'folder':
-        _addChatToFolder(chatId);
-        break;
-      case 'delete':
-        await provider.deleteChat(chatId);
-        break;
-    }
-  }
-
-  Future<void> _toggleMute(String chatId, bool mute) async {
-    final myUid = _myUid;
-    try {
-      await FirebaseFirestore.instance.collection('chats').doc(chatId).update({
-        'muted_for': mute ? FieldValue.arrayUnion([myUid]) : FieldValue.arrayRemove([myUid]),
-      });
-      if (mounted) context.read<ChatProvider>().loadChats();
-    } catch (_) {}
-  }
-
-  Future<void> _toggleArchive(String chatId, bool currentlyArchived) async {
-    try {
-      final provider = context.read<ChatProvider>();
-      if (currentlyArchived) {
-        await provider.unarchiveChat(chatId);
-      } else {
-        await provider.archiveChat(chatId);
-      }
-    } catch (_) {}
-  }
-}
-
-class _NavItem {
-  final IconData icon;
-  final IconData active;
-  final String label;
-  const _NavItem({required this.icon, required this.active, required this.label});
 }
