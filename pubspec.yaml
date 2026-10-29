@@ -74,7 +74,6 @@ dependencies:
   connectivity_plus: ^5.0.0
   emailjs: ^4.0.0
   flutter_tts: 3.8.5
-  record: ^5.1.2
   # NEW: Audio player for ringtone preview
   # audioplayers: ^6.0.0
 
