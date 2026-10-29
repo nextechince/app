@@ -28,6 +28,7 @@ import 'screens/auth/signin_passcode_screen.dart';
 import 'screens/auth/setup_profile_screen.dart';
 import 'screens/main_app_screen.dart';
 import 'screens/chat/chat_screen.dart';
+import 'screens/chat/group_chat_screen.dart'; // NEW GROUP SCREEN
 import 'screens/bot/bot_store_screen.dart';
 import 'screens/bot/bot_creator_screen.dart';
 import 'screens/settings/privacy_settings_screen.dart';
@@ -41,6 +42,7 @@ import 'screens/settings/account_settings_screen.dart';
 import 'screens/settings/bot_settings_screen.dart';
 import 'screens/settings/restore_chats_screen.dart';
 import 'screens/settings/settings_screen.dart';
+import 'screens/settings/luma_premium_screen.dart'; // PREMIUM SCREEN
 import 'screens/profile/profile_screen.dart';
 import 'screens/profile/public_profile_screen.dart';
 import 'screens/groups/create_group_screen.dart';
@@ -281,7 +283,7 @@ class ErrorApp extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// AUTH ROUTER — checks login + routes
+// AUTH ROUTER (Includes Offline Sync Logic)
 // ═════════════════════════════════════════════════════════════════════════════
 class AuthRouter extends StatefulWidget {
   const AuthRouter({super.key});
@@ -314,7 +316,13 @@ class _AuthRouterState extends State<AuthRouter> {
     // ═══════════════════════════════════════════════════════════════
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) {
-      // Try Firestore for profile completeness
+      
+      // 🟢 SEAMLESS OFFLINE SYNC: Load ChatProvider from cache instantly
+      if (mounted) {
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+        chatProvider.setMockUser(currentUser.uid);
+      }
+
       bool complete = false;
       try {
         final userDoc = await FirebaseFirestore.instance
@@ -324,23 +332,19 @@ class _AuthRouterState extends State<AuthRouter> {
             .timeout(const Duration(seconds: 4));
 
         final data = userDoc.data();
-        final hasUsername =
-            (data?['username'] as String?)?.trim().isNotEmpty ?? false;
-        final hasDisplayName =
-            (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
+        final hasUsername = (data?['username'] as String?)?.trim().isNotEmpty ?? false;
+        final hasDisplayName = (data?['display_name'] as String?)?.trim().isNotEmpty ?? false;
         complete = userDoc.exists && hasUsername && hasDisplayName;
       } catch (_) {
-        // Offline — check cached prefs
+        // Offline fallback
         final cachedUsername = prefs.getString('mock_username');
         final cachedName = prefs.getString('mock_display_name');
-        complete = (cachedUsername?.isNotEmpty ?? false) &&
-            (cachedName?.isNotEmpty ?? false);
+        complete = (cachedUsername?.isNotEmpty ?? false) && (cachedName?.isNotEmpty ?? false);
       }
 
       if (!mounted) return;
       setState(() {
-        _targetScreen =
-            complete ? const MainAppScreen() : const SetupProfileScreen();
+        _targetScreen = complete ? const MainAppScreen() : const SetupProfileScreen();
         _isChecking = false;
       });
       return;
@@ -351,15 +355,19 @@ class _AuthRouterState extends State<AuthRouter> {
     // ═══════════════════════════════════════════════════════════════
     final cachedUserId = prefs.getString('mock_user_id');
     if (cachedUserId != null && cachedUserId.isNotEmpty) {
+      
+      if (mounted) {
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+        chatProvider.setMockUser(cachedUserId);
+      }
+
       final cachedUsername = prefs.getString('mock_username');
       final cachedName = prefs.getString('mock_display_name');
-      final hasProfile = (cachedUsername?.isNotEmpty ?? false) &&
-          (cachedName?.isNotEmpty ?? false);
+      final hasProfile = (cachedUsername?.isNotEmpty ?? false) && (cachedName?.isNotEmpty ?? false);
 
       if (!mounted) return;
       setState(() {
-        _targetScreen =
-            hasProfile ? const MainAppScreen() : const SetupProfileScreen();
+        _targetScreen = hasProfile ? const MainAppScreen() : const SetupProfileScreen();
         _isChecking = false;
       });
       return;
@@ -373,28 +381,18 @@ class _AuthRouterState extends State<AuthRouter> {
 
     if (pendingPhone == null) {
       if (!mounted) return;
-      setState(() {
-        _targetScreen = const PhoneEntryScreen();
-        _isChecking = false;
-      });
+      setState(() { _targetScreen = const PhoneEntryScreen(); _isChecking = false; });
       return;
     }
 
     if (pendingEmail == null) {
       if (!mounted) return;
-      setState(() {
-        _targetScreen = const EmailEntryScreen();
-        _isChecking = false;
-      });
+      setState(() { _targetScreen = const EmailEntryScreen(); _isChecking = false; });
       return;
     }
 
-    // Both exist but no user — restart from phone
     if (!mounted) return;
-    setState(() {
-      _targetScreen = const PhoneEntryScreen();
-      _isChecking = false;
-    });
+    setState(() { _targetScreen = const PhoneEntryScreen(); _isChecking = false; });
   }
 
   @override
@@ -406,9 +404,7 @@ class _AuthRouterState extends State<AuthRouter> {
     if (_isChecking) {
       return Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
-        body: Center(
-          child: CircularProgressIndicator(color: theme.colorScheme.primary),
-        ),
+        body: Center(child: CircularProgressIndicator(color: theme.colorScheme.primary)),
       );
     }
     return _targetScreen!;
@@ -437,8 +433,7 @@ class _CallListenerState extends State<CallListener> {
 
   void _setupCallListening() {
     try {
-      final authProvider =
-          Provider.of<LumaAuthProvider>(context, listen: false);
+      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
       final userId = authProvider.currentUserId;
       if (userId == null) return;
 
@@ -496,16 +491,14 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
-        final authProvider =
-            Provider.of<LumaAuthProvider>(context, listen: false);
+        final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
         authProvider.listenToAuthChanges();
       } catch (e) {
         debugPrint('Auth listener error: $e');
       }
 
       try {
-        final settingsProvider =
-            Provider.of<SettingsProvider>(context, listen: false);
+        final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
         settingsProvider.startForegroundTimer();
       } catch (e) {
         debugPrint('Settings timer error: $e');
@@ -513,8 +506,7 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
 
       try {
         PushNotificationService().onChatOpen = (chatId) {
-          navigatorKey.currentState
-              ?.pushNamed('/chat', arguments: {'chatId': chatId});
+          navigatorKey.currentState?.pushNamed('/chat', arguments: {'chatId': chatId});
         };
       } catch (e) {
         debugPrint('Push onChatOpen error: $e');
@@ -533,8 +525,7 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
       _handleBackground();
     } else if (state == AppLifecycleState.resumed) {
       _handleResume();
@@ -544,8 +535,7 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
   void _handleBackground() async {
     try {
       OnlineStatusService.setOffline();
-      final settingsProvider =
-          Provider.of<SettingsProvider>(context, listen: false);
+      final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
       settingsProvider.stopForegroundTimer();
       settingsProvider.onAppBackground();
     } catch (e) {
@@ -556,11 +546,9 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
   void _handleResume() async {
     try {
       await OnlineStatusService.setOnline();
-      final authProvider =
-          Provider.of<LumaAuthProvider>(context, listen: false);
+      final authProvider = Provider.of<LumaAuthProvider>(context, listen: false);
       authProvider.refreshSession();
-      final settingsProvider =
-          Provider.of<SettingsProvider>(context, listen: false);
+      final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
       settingsProvider.startForegroundTimer();
       await settingsProvider.shouldShowLockScreen();
     } catch (e) {
@@ -590,15 +578,9 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
             themeMode: themeProvider.themeMode,
             initialRoute: '/',
             builder: (context, child) {
-              return Column(
-                children: [
-                  const OfflineBanner(),
-                  Expanded(
-                    child: _AppLockWrapper(
-                        child: child ?? const SizedBox.shrink()),
-                  ),
-                ],
-              );
+              // 🟢 OFFLINE LOGIC: Removed the OfflineBanner entirely. 
+              // The app now silently handles offline states in the background.
+              return _AppLockWrapper(child: child ?? const SizedBox.shrink());
             },
             routes: {
               '/': (_) => const AuthRouter(),
@@ -609,7 +591,18 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
               '/passcode_setup': (_) => const PasscodeSetupScreen(),
               '/setup_profile': (_) => const SetupProfileScreen(),
               '/main': (_) => const MainAppScreen(),
+              
+              // 🟢 CHAT ROUTES
               '/chat': (_) => const ChatScreen(),
+              '/group_chat': (context) {
+                final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+                return GroupChatScreen(
+                  chatId: args?['chatId'] ?? '',
+                  chatName: args?['chatName'] ?? 'Group',
+                  chatAvatar: args?['chatAvatar'],
+                );
+              },
+
               '/bot_store': (_) => const BotStoreScreen(),
               '/bot_creator': (_) => const BotCreatorScreen(),
               '/privacy_settings': (_) => const PrivacySettingsScreen(),
@@ -627,9 +620,9 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
               '/appeal': (_) => const AppealScreen(),
               '/ai_chatbot': (_) => const AIChatbotScreen(),
               '/ai_studio': (_) => const AIStudioScreen(),
+              '/premium': (_) => const LumaPremiumScreen(), // NEW PREMIUM SCREEN
               '/channel': (context) {
-                final args = ModalRoute.of(context)?.settings.arguments
-                    as Map<String, dynamic>?;
+                final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
                 return ChannelChatScreen(
                   channelId: args?['channelId'] as String? ?? '',
                   channelName: args?['channelName'] as String? ?? 'Channel',
@@ -639,8 +632,7 @@ class _LumaChatAppState extends State<LumaChatApp> with WidgetsBindingObserver {
               '/global_search': (_) => const GlobalSearchScreen(),
               '/contacts': (_) => const ContactsScreen(),
               '/settings': (_) => const SettingsScreen(),
-              '/notifications_settings': (_) =>
-                  const NotificationsSettingsScreen(),
+              '/notifications_settings': (_) => const NotificationsSettingsScreen(),
               '/data_storage': (_) => const DataStorageScreen(),
               '/account_settings': (_) => const AccountSettingsScreen(),
               '/bot_settings': (_) => const BotSettingsScreen(),
@@ -683,16 +675,10 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
     if (userId == null) return app;
 
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) return app;
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return app;
-        }
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) return app;
 
         final userData = snapshot.data?.data() as Map<String, dynamic>?;
         if (userData == null) return app;
@@ -703,15 +689,8 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
         if (isBanned && bannedUntil != null) {
           final banExpiry = bannedUntil.toDate();
           if (DateTime.now().isAfter(banExpiry)) {
-            FirebaseFirestore.instance
-                .collection('users')
-                .doc(userId)
-                .update({
-              'is_banned': false,
-              'banned_until': null,
-              'ban_reason': null,
-              'ban_report_id': null,
-              'ban_level': null,
+            FirebaseFirestore.instance.collection('users').doc(userId).update({
+              'is_banned': false, 'banned_until': null, 'ban_reason': null, 'ban_report_id': null, 'ban_level': null,
             }).catchError((_) {});
             return app;
           }
@@ -719,11 +698,8 @@ class _AppLockWrapperState extends State<_AppLockWrapper> {
 
         if (isBanned) {
           final banStatus = {
-            'is_banned': true,
-            'banned_until': bannedUntil?.toDate(),
-            'ban_reason': userData['ban_reason'],
-            'ban_level': userData['ban_level'],
-            'ban_report_id': userData['ban_report_id'],
+            'is_banned': true, 'banned_until': bannedUntil?.toDate(), 'ban_reason': userData['ban_reason'],
+            'ban_level': userData['ban_level'], 'ban_report_id': userData['ban_report_id'],
           };
           return BannedScreen(banStatus: banStatus);
         }
@@ -759,8 +735,7 @@ class _LockScreenState extends State<LockScreen> {
     if (_isAuthenticating) return;
     _isAuthenticating = true;
 
-    final settingsProvider =
-        Provider.of<SettingsProvider>(context, listen: false);
+    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
 
     if (settingsProvider.biometricLock) {
       final localAuth = LocalAuthentication();
@@ -768,34 +743,10 @@ class _LockScreenState extends State<LockScreen> {
         final didAuth = await localAuth.authenticate(
           localizedReason: 'Unlock Luma Chat',
           authMessages: const [
-            AndroidAuthMessages(
-              signInTitle: 'Biometric Authentication',
-              cancelButton: 'Cancel',
-              biometricHint: 'Verify your identity',
-              biometricNotRecognized: 'Not recognized, try again',
-              biometricRequiredTitle: 'Biometric authentication required',
-              biometricSuccess: 'Authentication successful',
-              deviceCredentialsRequiredTitle: 'Device credentials required',
-              deviceCredentialsSetupDescription:
-                  'Please set up device credentials',
-              goToSettingsButton: 'Go to Settings',
-              goToSettingsDescription:
-                  'Please set up biometric authentication in your device settings',
-            ),
-            IOSAuthMessages(
-              cancelButton: 'Cancel',
-              goToSettingsButton: 'Go to Settings',
-              goToSettingsDescription:
-                  'Please set up biometric authentication in your device settings',
-              lockOut: 'Please re-enable biometric authentication',
-            ),
+            AndroidAuthMessages(signInTitle: 'Biometric Authentication', cancelButton: 'Cancel'),
+            IOSAuthMessages(cancelButton: 'Cancel'),
           ],
-          options: const AuthenticationOptions(
-            biometricOnly: false,
-            stickyAuth: true,
-            sensitiveTransaction: true,
-            useErrorDialogs: true,
-          ),
+          options: const AuthenticationOptions(biometricOnly: false, stickyAuth: true, useErrorDialogs: true),
         );
 
         if (didAuth && mounted) {
@@ -822,9 +773,7 @@ class _LockScreenState extends State<LockScreen> {
         child: Center(
           child: _showPasscode
               ? _PasscodeEntry(
-                  correctPasscode:
-                      Provider.of<SettingsProvider>(context, listen: false)
-                          .passcode,
+                  correctPasscode: Provider.of<SettingsProvider>(context, listen: false).passcode,
                   onUnlocked: widget.onUnlocked,
                   onCancel: () => setState(() => _showPasscode = false),
                 )
@@ -840,56 +789,24 @@ class _LockScreenState extends State<LockScreen> {
       children: [
         Container(
           padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary.withOpacity(0.15),
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: theme.colorScheme.primary.withOpacity(0.3),
-            ),
-          ),
-          child: Icon(
-            Icons.lock_outline,
-            size: 48,
-            color: theme.colorScheme.primary,
-          ),
+          decoration: BoxDecoration(color: theme.colorScheme.primary.withOpacity(0.15), shape: BoxShape.circle),
+          child: Icon(Icons.lock_outline, size: 48, color: theme.colorScheme.primary),
         ),
         const SizedBox(height: 32),
-        Text(
-          'Luma is Locked',
-          style: theme.textTheme.headlineSmall
-              ?.copyWith(fontWeight: FontWeight.bold),
-        ),
+        Text('Luma is Locked', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
         const SizedBox(height: 12),
-        Text(
-          'Authentication required to continue',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurface.withOpacity(0.5),
-          ),
-        ),
+        Text('Authentication required to continue', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurface.withOpacity(0.5))),
         const SizedBox(height: 48),
         GestureDetector(
           onTap: () {
             final sp = Provider.of<SettingsProvider>(context, listen: false);
-            if (sp.appPasscode) {
-              setState(() => _showPasscode = true);
-            } else {
-              _attemptAutoAuth();
-            }
+            if (sp.appPasscode) setState(() => _showPasscode = true);
+            else _attemptAutoAuth();
           },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: const Text(
-              'Enter Passcode',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(30)),
+            child: const Text('Enter Passcode', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
           ),
         ),
       ],
@@ -905,11 +822,7 @@ class _PasscodeEntry extends StatefulWidget {
   final VoidCallback onUnlocked;
   final VoidCallback onCancel;
 
-  const _PasscodeEntry({
-    required this.correctPasscode,
-    required this.onUnlocked,
-    required this.onCancel,
-  });
+  const _PasscodeEntry({required this.correctPasscode, required this.onUnlocked, required this.onCancel});
 
   @override
   State<_PasscodeEntry> createState() => _PasscodeEntryState();
@@ -921,32 +834,20 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
 
   void _onDigit(String d) {
     if (_entered.length < 6) {
-      setState(() {
-        _entered += d;
-        _error = '';
-      });
+      setState(() { _entered += d; _error = ''; });
       if (_entered.length == 6) _verify();
     }
   }
 
   void _onBackspace() {
     if (_entered.isNotEmpty) {
-      setState(() {
-        _entered = _entered.substring(0, _entered.length - 1);
-        _error = '';
-      });
+      setState(() { _entered = _entered.substring(0, _entered.length - 1); _error = ''; });
     }
   }
 
   void _verify() {
-    if (_entered == widget.correctPasscode) {
-      widget.onUnlocked();
-    } else {
-      setState(() {
-        _error = 'Incorrect passcode';
-        _entered = '';
-      });
-    }
+    if (_entered == widget.correctPasscode) widget.onUnlocked();
+    else setState(() { _error = 'Incorrect passcode'; _entered = ''; });
   }
 
   @override
@@ -957,34 +858,9 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withOpacity(0.15),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: theme.colorScheme.primary.withOpacity(0.3),
-              ),
-            ),
-            child: Icon(
-              Icons.pin_outlined,
-              size: 32,
-              color: theme.colorScheme.primary,
-            ),
-          ),
+          Icon(Icons.pin_outlined, size: 32, color: theme.colorScheme.primary),
           const SizedBox(height: 24),
-          Text(
-            'Enter Passcode',
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Enter your 6-digit PIN to unlock',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.4),
-            ),
-          ),
+          Text('Enter Passcode', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 32),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -992,38 +868,25 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
               final filled = i < _entered.length;
               return Container(
                 margin: const EdgeInsets.symmetric(horizontal: 8),
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color:
-                      filled ? theme.colorScheme.primary : theme.dividerColor,
-                ),
+                width: 16, height: 16,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: filled ? theme.colorScheme.primary : theme.dividerColor),
               );
             }),
           ),
           if (_error.isNotEmpty) ...[
             const SizedBox(height: 16),
-            Text(
-              _error,
-              style: const TextStyle(color: Colors.redAccent, fontSize: 14),
-            ),
+            Text(_error, style: const TextStyle(color: Colors.redAccent, fontSize: 14)),
           ],
           const SizedBox(height: 40),
           SizedBox(
             width: 300,
             child: GridView.count(
-              shrinkWrap: true,
-              crossAxisCount: 3,
-              childAspectRatio: 1.2,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 16,
-              crossAxisSpacing: 16,
+              shrinkWrap: true, crossAxisCount: 3, childAspectRatio: 1.2,
+              physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 16, crossAxisSpacing: 16,
               children: [
                 for (var i = 1; i <= 9; i++) _digit(i.toString()),
                 _action(Icons.fingerprint, () {
-                  final sp =
-                      Provider.of<SettingsProvider>(context, listen: false);
+                  final sp = Provider.of<SettingsProvider>(context, listen: false);
                   if (sp.biometricLock) _tryBiometric();
                 }),
                 _digit('0'),
@@ -1041,13 +904,7 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
   Future<void> _tryBiometric() async {
     final localAuth = LocalAuthentication();
     try {
-      final ok = await localAuth.authenticate(
-        localizedReason: 'Unlock Luma Chat',
-        options: const AuthenticationOptions(
-          biometricOnly: false,
-          stickyAuth: true,
-        ),
-      );
+      final ok = await localAuth.authenticate(localizedReason: 'Unlock Luma Chat', options: const AuthenticationOptions(biometricOnly: false, stickyAuth: true));
       if (ok && mounted) widget.onUnlocked();
     } catch (e) {
       debugPrint('Biometric retry failed: $e');
@@ -1059,20 +916,8 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
     return GestureDetector(
       onTap: () => _onDigit(d),
       child: Container(
-        decoration: BoxDecoration(
-          color: theme.brightness == Brightness.dark
-              ? Colors.white.withOpacity(0.06)
-              : Colors.black.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: theme.dividerColor),
-        ),
-        child: Center(
-          child: Text(
-            d,
-            style: theme.textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w500),
-          ),
-        ),
+        decoration: BoxDecoration(color: theme.brightness == Brightness.dark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.04), borderRadius: BorderRadius.circular(20), border: Border.all(color: theme.dividerColor)),
+        child: Center(child: Text(d, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w500))),
       ),
     );
   }
@@ -1082,94 +927,15 @@ class _PasscodeEntryState extends State<_PasscodeEntry> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        decoration: BoxDecoration(
-          color: theme.brightness == Brightness.dark
-              ? Colors.white.withOpacity(0.04)
-              : Colors.black.withOpacity(0.02),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: theme.dividerColor),
-        ),
-        child: Center(
-          child: Icon(
-            icon,
-            color: theme.colorScheme.onSurface.withOpacity(0.6),
-            size: 24,
-          ),
-        ),
+        decoration: BoxDecoration(color: theme.brightness == Brightness.dark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.02), borderRadius: BorderRadius.circular(20), border: Border.all(color: theme.dividerColor)),
+        child: Center(child: Icon(icon, color: theme.colorScheme.onSurface.withOpacity(0.6), size: 24)),
       ),
     );
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// OFFLINE BANNER
-// ═════════════════════════════════════════════════════════════════════════════
-class OfflineBanner extends StatefulWidget {
-  const OfflineBanner({super.key});
-
-  @override
-  State<OfflineBanner> createState() => _OfflineBannerState();
-}
-
-class _OfflineBannerState extends State<OfflineBanner> {
-  bool _offline = false;
-  StreamSubscription<ConnectivityResult>? _sub;
-
-  @override
-  void initState() {
-    super.initState();
-    _check();
-    _sub = Connectivity().onConnectivityChanged.listen((result) {
-      if (!mounted) return;
-      setState(() => _offline = result == ConnectivityResult.none);
-    });
-  }
-
-  Future<void> _check() async {
-    try {
-      final result = await Connectivity().checkConnectivity();
-      if (!mounted) return;
-      setState(() => _offline = result == ConnectivityResult.none);
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      height: _offline ? 28 : 0,
-      color: const Color(0xFFE53935),
-      child: _offline
-          ? const Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.wifi_off_rounded, size: 14, color: Colors.white),
-                  SizedBox(width: 6),
-                  Text(
-                    'No internet connection',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          : null,
-    );
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CONNECTIVITY SERVICE
+// CONNECTIVITY SERVICE (Background Only)
 // ═════════════════════════════════════════════════════════════════════════════
 class ConnectivityService {
   static final ConnectivityService _i = ConnectivityService._();
