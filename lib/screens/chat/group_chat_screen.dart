@@ -5,8 +5,11 @@ import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -14,6 +17,7 @@ import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
@@ -56,7 +60,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   bool _isMePremium = false;
   String? _wallpaperUrl;
   
-  String? _activePanel;
+  String? _activePanel; // 'emoji', 'sticker', 'gif'
   bool _isSearching = false;
   
   Map<String, dynamic>? _chatData;
@@ -81,6 +85,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final Map<String, VideoPlayerController> _videoControllers = {};
   final Map<String, bool> _typingUsers = {};
   Timer? _typingTimer;
+
+  // Custom Attachment State
+  int _selectedBottomTab = 0; 
+  List<File> _selectedImages = [];
 
   @override
   void initState() {
@@ -189,6 +197,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Future<void> _sendText() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    
+    // IMAGE 1: Check if group is locked
+    final isLocked = _chatData?['is_locked'] == true;
+    if (isLocked && _myRole != 'admin' && _myRole != 'owner') {
+      _showSnack('Text not allowed. Group is locked to admins.');
+      return;
+    }
+
     _messageController.clear();
     _sendTypingStatus(false);
     final msgId = const Uuid().v4();
@@ -228,6 +244,28 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
       'id': msgId, 'sender_id': _currentUserId, 'type': type, 'media_type': type, 'media_url': url, 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
     });
+  }
+
+  // New: Send actual camera image from custom picker
+  Future<void> _pickFromCamera() async {
+    try {
+      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+      if (photo != null) {
+        Navigator.pop(context); // close modal
+        final file = File(photo.path);
+        _showSnack('Uploading...');
+        final url = await CloudinaryService.uploadImage(file, 'luma/groups');
+        if (url != null && mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          final msgId = const Uuid().v4();
+          await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+            'id': msgId, 'sender_id': _currentUserId, 'type': 'image', 'media_type': 'image', 'media_url': url, 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
+          });
+        }
+      }
+    } catch (e) {
+      _showSnack('Camera error: $e');
+    }
   }
 
   Future<void> _startRecording() async {
@@ -360,6 +398,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildComposer(ThemeData theme, bool isDark) {
+    final isLocked = _chatData?['is_locked'] == true;
+    final canText = !isLocked || _myRole == 'admin' || _myRole == 'owner';
+
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
       color: isDark ? const Color(0xFF17212B) : const Color(0xFFF0F0F0),
@@ -385,20 +426,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       child: TextField(
                         controller: _messageController, minLines: 1, maxLines: null,
                         onChanged: (val) => _sendTypingStatus(val.isNotEmpty),
-                        decoration: const InputDecoration(hintText: 'Message', border: InputBorder.none, contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                        enabled: canText,
+                        decoration: InputDecoration(
+                          hintText: canText ? 'Message' : 'Text not allowed', // Image 1 Fix
+                          hintStyle: TextStyle(color: Colors.grey[500]),
+                          border: InputBorder.none, 
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
+                        ),
                         onTap: () { if (_activePanel != null) setState(() => _activePanel = null); },
                       ),
                     ),
                     IconButton(icon: Icon(Icons.attach_file, color: theme.colorScheme.onSurface.withOpacity(0.6)), onPressed: () => _showAttachmentSheet()),
-                    IconButton(icon: Icon(Icons.camera_alt_outlined, color: theme.colorScheme.onSurface.withOpacity(0.6)), onPressed: () => _pickAndSendMedia('image')),
+                    // Camera Icon quick action
+                    IconButton(icon: Icon(Icons.camera_alt_outlined, color: theme.colorScheme.onSurface.withOpacity(0.6)), onPressed: _pickFromCamera),
                   ],
                 ),
               ),
             ),
             const SizedBox(width: 8),
+            // Image 3 Fix: Sharp circle, no overlay background
             GestureDetector(
-              onLongPress: _startRecording, onLongPressEnd: (_) => _stopRecording(send: true),
-              child: CircleAvatar(radius: 24, backgroundColor: const Color(0xFF3390EC), child: Icon(_messageController.text.trim().isEmpty ? Icons.mic : Icons.send, color: Colors.white, size: 22)),
+              onLongPress: canText ? _startRecording : null, 
+              onLongPressEnd: (_) => canText ? _stopRecording(send: true) : null,
+              child: Container(
+                width: 48, height: 48,
+                decoration: const BoxDecoration(color: Color(0xFF3390EC), shape: BoxShape.circle),
+                child: Icon(_messageController.text.trim().isEmpty ? Icons.mic : Icons.send, color: Colors.white, size: 22),
+              ),
             ),
           ],
         ),
@@ -417,36 +471,355 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return const SizedBox.shrink();
   }
 
+  // ==========================================
+  // IMAGE 4-8 & 9: Custom Attachment Bottom Sheet
+  // ==========================================
   void _showAttachmentSheet() {
-    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1F2C34) : Colors.white, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (_) => SafeArea(
-      child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          _attachTile(Icons.image, 'Gallery', () => _pickAndSendMedia('image')),
-          _attachTile(Icons.videocam, 'Video', () => _pickAndSendMedia('video')),
-          _attachTile(Icons.sticky_note_2, 'Sticker', () { Navigator.pop(context); setState(() => _activePanel = 'sticker'); }),
-        ]),
-        const SizedBox(height: 24),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          _attachTile(Icons.gif_box, 'GIF', () { Navigator.pop(context); setState(() => _activePanel = 'gif'); }),
-          _attachTile(Icons.insert_drive_file, 'File', () {}),
-          const Expanded(child: SizedBox()),
-        ])
-      ])),
-    ));
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.75,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                children: [
+                  Container(margin: const EdgeInsets.only(top: 10, bottom: 10), height: 4, width: 40, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+                  
+                  // Content Area
+                  Expanded(
+                    child: _buildBottomSheetContent(_selectedBottomTab, setModalState),
+                  ),
+
+                  // Bottom Tab Bar (Image 9 Style)
+                  _buildBottomTabBar(setModalState),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomSheetContent(int index, StateSetter setModalState) {
+    switch (index) {
+      case 0: return _buildCustomImagePicker(setModalState);
+      case 1: return _buildFilePicker();
+      case 2: return _buildLocationPicker();
+      case 3: return _buildContactsPicker(); // Re-using index 3 for contacts
+      case 4: return _buildMusicPicker();
+      default: return const Center(child: Text("Select an option"));
+    }
+  }
+
+  // Image 4: Custom Image Picker Grid & Camera
+  Widget _buildCustomImagePicker(StateSetter setModalState) {
+    return Column(
+      children: [
+        ListTile(
+          leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(Icons.camera_alt, color: Colors.white)),
+          title: const Text("Open Camera", style: TextStyle(fontWeight: FontWeight.bold)),
+          onTap: _pickFromCamera,
+        ),
+        const Divider(),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
+          child: Align(alignment: Alignment.centerLeft, child: Text("Recent Photos", style: TextStyle(fontWeight: FontWeight.bold))),
+        ),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(8),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 4, mainAxisSpacing: 4),
+            itemCount: 15, 
+            itemBuilder: (context, i) {
+              return GestureDetector(
+                onTap: () => _pickAndSendMedia('image'), // Opens standard gallery to select
+                child: Container(
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(Icons.photo, color: Colors.white),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Image 5: File Picker
+  Widget _buildFilePicker() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildListTile(Icons.folder, Colors.green, "Internal Storage", "Browse your file system", onTap: () async {
+          FilePickerResult? result = await FilePicker.platform.pickFiles();
+          if (result != null) {
+             Navigator.pop(context);
+             _showSnack('Uploading File...');
+             final file = File(result.files.single.path!);
+             final url = await CloudinaryService.uploadFile(file, 'luma/files'); // Ensure this method exists in your CloudinaryService
+             if(url != null) {
+                final msgId = const Uuid().v4();
+                await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+                  'id': msgId, 'sender_id': _currentUserId, 'type': 'file', 'media_type': 'file', 'media_url': url, 'file_name': result.files.single.name, 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
+                });
+             }
+          }
+        }),
+        _buildListTile(Icons.folder, Colors.blue, "Luma Chat", "Browse the app's folder", onTap: () {}), 
+        _buildListTile(Icons.photo_library, Colors.orange, "Gallery", "To send images without compression", onTap: () => _pickAndSendMedia('image')),
+      ],
+    );
+  }
+
+  // Image 6: Location Sharing
+  Widget _buildLocationPicker() {
+    return Column(
+      children: [
+        Expanded(
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(16)),
+            child: const Center(child: Icon(Icons.location_on, size: 80, color: Colors.red)), // Mock Map View
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              _buildActionTile(Icons.location_on, Colors.blue, "Send My Current Location", "Accurate to 3 meters", () async {
+                Navigator.pop(context);
+                LocationPermission permission = await Geolocator.checkPermission();
+                if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+                if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+                  Position pos = await Geolocator.getCurrentPosition();
+                  final msgId = const Uuid().v4();
+                  await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+                    'id': msgId, 'sender_id': _currentUserId, 'type': 'location', 'media_type': 'location', 'latitude': pos.latitude, 'longitude': pos.longitude, 'text': 'https://maps.google.com/?q=${pos.latitude},${pos.longitude}', 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
+                  });
+                }
+              }),
+              _buildActionTile(Icons.location_searching, Colors.green, "Share My Live Location for...", "Updated in real time as you move", () {
+                 _showSnack('Live location requires background service implementation.');
+              }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Image 7: Contacts (Luma Chat only)
+  Widget _buildContactsPicker() {
+    return FutureBuilder<List<Contact>>(
+      future: FlutterContacts.getContacts(withProperties: true),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No contacts found or permission denied"));
+        
+        final contacts = snapshot.data!;
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: TextField(
+                decoration: InputDecoration(hintText: "Search contacts", prefixIcon: const Icon(Icons.search), filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none)),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: contacts.length,
+                itemBuilder: (context, index) {
+                  final c = contacts[index];
+                  final name = c.displayName ?? 'Unknown';
+                  final phone = c.phones.isNotEmpty ? c.phones.first.number : 'No number';
+                  return ListTile(
+                    leading: CircleAvatar(backgroundColor: Colors.blue, child: Text(name[0], style: const TextStyle(color: Colors.white))),
+                    title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(phone, style: TextStyle(color: Colors.grey[600])),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final msgId = const Uuid().v4();
+                      await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+                        'id': msgId, 'sender_id': _currentUserId, 'type': 'contact', 'media_type': 'contact', 'text': '$name\n$phone', 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Image 8: Music Picker
+  Widget _buildMusicPicker() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: TextField(
+            decoration: InputDecoration(hintText: "Search music", prefixIcon: const Icon(Icons.search), filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none)),
+          ),
+        ),
+        ListTile(
+          leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(Icons.audio_file, color: Colors.white)),
+          title: const Text("Pick Audio File from Device"),
+          subtitle: const Text("Select an MP3 or M4A"),
+          onTap: () async {
+            FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.audio);
+            if (result != null) {
+              Navigator.pop(context);
+              _showSnack('Uploading Audio...');
+              final file = File(result.files.single.path!);
+              final url = await CloudinaryService.uploadAudio(file, 'luma/music');
+              if(url != null) {
+                final msgId = const Uuid().v4();
+                await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
+                  'id': msgId, 'sender_id': _currentUserId, 'type': 'audio', 'media_type': 'audio', 'media_url': url, 'file_name': result.files.single.name, 'created_at': FieldValue.serverTimestamp(), 'is_read': false,
+                });
+              }
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  // Helper methods for Bottom Sheet
+  Widget _buildListTile(IconData icon, Color color, String title, String subtitle, {required VoidCallback onTap}) {
+    return ListTile(
+      leading: CircleAvatar(backgroundColor: color, child: Icon(icon, color: Colors.white)),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: Text(subtitle, style: TextStyle(color: Colors.grey[600])),
+      onTap: onTap,
+    );
+  }
+
+    Widget _buildActionTile(IconData icon, Color color, String title, String subtitle, VoidCallback onTap) {
+    return ListTile(
+      leading: CircleAvatar(backgroundColor: color, child: Icon(icon, color: Colors.white)),
+      title: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+      subtitle: Text(subtitle),
+      onTap: onTap,
+    );
+  }
+
+  // ==========================================
+  // IMAGE 9: Sticker/GIF/Emoji Bottom Tab (Redesign)
+  // ==========================================
+  Widget _buildBottomTabBar(StateSetter setModalState) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Colors.black12)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildTabIcon(Icons.photo_library, "Gallery", 0, setModalState),
+          _buildTabIcon(Icons.insert_drive_file, "File", 1, setModalState),
+          _buildTabIcon(Icons.location_on, "Location", 2, setModalState),
+          _buildTabIcon(Icons.person, "Contact", 3, setModalState),
+          _buildTabIcon(Icons.music_note, "Music", 4, setModalState),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabIcon(IconData icon, String label, int index, StateSetter setModalState) {
+    bool isSelected = _selectedBottomTab == index;
+    return GestureDetector(
+      onTap: () {
+        setModalState(() {
+          _selectedBottomTab = index;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[50] : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: isSelected ? Colors.blue : Colors.black87, size: 24),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.blue : Colors.black87,
+                fontSize: 10,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _attachTile(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(onTap: onTap, child: Column(mainAxisSize: MainAxisSize.min, children: [Container(width: 56, height: 56, decoration: const BoxDecoration(color: Color(0xFF3390EC), shape: BoxShape.circle), child: Icon(icon, color: Colors.white, size: 26)), const SizedBox(height: 8), Text(label, style: const TextStyle(fontSize: 12))]));
+    return GestureDetector(
+      onTap: onTap, 
+      child: Column(
+        mainAxisSize: MainAxisSize.min, 
+        children: [
+          Container(width: 56, height: 56, decoration: const BoxDecoration(color: Color(0xFF3390EC), shape: BoxShape.circle), child: Icon(icon, color: Colors.white, size: 26)), 
+          const SizedBox(height: 8), 
+          Text(label, style: const TextStyle(fontSize: 12))
+        ]
+      )
+    );
   }
 
   Widget _headerCircle({required IconData icon, required VoidCallback onTap}) {
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 2), child: Material(color: Colors.black12, shape: const CircleBorder(), child: InkWell(customBorder: const CircleBorder(), onTap: onTap, child: SizedBox(width: 40, height: 40, child: Icon(icon, color: Colors.white, size: 20)))));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2), 
+      child: Material(
+        color: Colors.black12, 
+        shape: const CircleBorder(), 
+        child: InkWell(
+          customBorder: const CircleBorder(), 
+          onTap: onTap, 
+          child: SizedBox(width: 40, height: 40, child: Icon(icon, color: Colors.white, size: 20))
+        )
+      )
+    );
   }
 
   Widget _buildPinnedBanner(ThemeData theme) {
     final p = _pinnedMessages.first;
     final msg = _findMessage(p['message_id']);
-    return Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), color: theme.colorScheme.primary.withOpacity(0.1), child: Row(children: [const Icon(Icons.push_pin, size: 16, color: Color(0xFF3390EC)), const SizedBox(width: 8), Expanded(child: Text((msg?['text'] ?? 'Pinned message').toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))), IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () async { await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('pinned_messages').doc(p['id']).delete(); _loadPinnedMessages(); })]));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), 
+      color: theme.colorScheme.primary.withOpacity(0.1), 
+      child: Row(
+        children: [
+          const Icon(Icons.push_pin, size: 16, color: Color(0xFF3390EC)), 
+          const SizedBox(width: 8), 
+          Expanded(child: Text((msg?['text'] ?? 'Pinned message').toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))), 
+          IconButton(
+            icon: const Icon(Icons.close, size: 16), 
+            onPressed: () async { 
+              await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('pinned_messages').doc(p['id']).delete(); 
+              _loadPinnedMessages(); 
+            }
+          )
+        ]
+      )
+    );
   }
 
   Widget _buildMessage(Map<String, dynamic> msg, ThemeData theme, bool isDark) {
