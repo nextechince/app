@@ -705,7 +705,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-    Widget _buildActionTile(IconData icon, Color color, String title, String subtitle, VoidCallback onTap) {
+   Widget _buildActionTile(IconData icon, Color color, String title, String subtitle, VoidCallback onTap) {
     return ListTile(
       leading: CircleAvatar(backgroundColor: color, child: Icon(icon, color: Colors.white)),
       title: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
