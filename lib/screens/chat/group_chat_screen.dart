@@ -10,10 +10,11 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -1406,14 +1407,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             child: SizedBox(
               width: 220, height: 140,
               child: AbsorbPointer(
-                child: GoogleMap(
+                child: FlutterMap(
                   key: ValueKey('map_${msg['id']}_${lat}_$lng'),
-                  initialCameraPosition: CameraPosition(target: pos, zoom: 15),
-                  liteModeEnabled: true,
-                  zoomControlsEnabled: false,
-                  myLocationButtonEnabled: false,
-                  mapToolbarEnabled: false,
-                  markers: {Marker(markerId: const MarkerId('m'), position: pos)},
+                  options: MapOptions(initialCenter: pos, initialZoom: 15, interactionOptions: const InteractionOptions(flags: InteractiveFlag.none)),
+                  children: [
+                    TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.lumachat.app'),
+                    MarkerLayer(markers: [Marker(point: pos, width: 36, height: 36, child: const Icon(Icons.location_on, color: Colors.red, size: 36))]),
+                  ],
                 ),
               ),
             ),
@@ -1762,13 +1762,14 @@ class _LocationTabState extends State<_LocationTab> {
                           TextButton(onPressed: () async { await Geolocator.openAppSettings(); }, child: const Text('Open settings')),
                         ]),
                       )
-                    : GoogleMap(
-                        initialCameraPosition: CameraPosition(target: LatLng(p!.latitude, p.longitude), zoom: 16),
-                        myLocationEnabled: true,
-                        myLocationButtonEnabled: true,
-                        zoomControlsEnabled: false,
-                        markers: {Marker(markerId: const MarkerId('me'), position: LatLng(p.latitude, p.longitude))},
-                        circles: {Circle(circleId: const CircleId('acc'), center: LatLng(p.latitude, p.longitude), radius: math.max(p.accuracy, 3), fillColor: Colors.blue.withOpacity(0.12), strokeColor: Colors.blue.withOpacity(0.4), strokeWidth: 1)},
+                    : FlutterMap(
+                        options: MapOptions(initialCenter: LatLng(p!.latitude, p.longitude), initialZoom: 16),
+                        children: [
+                          TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.lumachat.app'),
+                          CircleLayer(circles: [CircleMarker(point: LatLng(p.latitude, p.longitude), radius: math.max(p.accuracy, 3), useRadiusInMeter: true, color: Colors.blue.withOpacity(0.12), borderColor: Colors.blue.withOpacity(0.4), borderStrokeWidth: 1)]),
+                          MarkerLayer(markers: [Marker(point: LatLng(p.latitude, p.longitude), width: 40, height: 40, child: const Icon(Icons.location_on, color: Colors.red, size: 40))]),
+                          const SimpleAttributionWidget(source: Text('OpenStreetMap contributors')),
+                        ],
                       ),
           ),
         ),
@@ -1815,7 +1816,7 @@ class _LocationViewerScreen extends StatefulWidget {
 }
 
 class _LocationViewerScreenState extends State<_LocationViewerScreen> {
-  GoogleMapController? _map;
+  final MapController _map = MapController();
 
   @override
   Widget build(BuildContext context) {
@@ -1828,12 +1829,15 @@ class _LocationViewerScreenState extends State<_LocationViewerScreen> {
           final lat = (data?['latitude'] as num?)?.toDouble() ?? widget.lat;
           final lng = (data?['longitude'] as num?)?.toDouble() ?? widget.lng;
           final pos = LatLng(lat, lng);
-          WidgetsBinding.instance.addPostFrameCallback((_) => _map?.animateCamera(CameraUpdate.newLatLng(pos)));
-          return GoogleMap(
-            initialCameraPosition: CameraPosition(target: pos, zoom: 16),
-            onMapCreated: (c) => _map = c,
-            myLocationEnabled: true,
-            markers: {Marker(markerId: const MarkerId('m'), position: pos)},
+          WidgetsBinding.instance.addPostFrameCallback((_) { try { _map.move(pos, 16); } catch (_) {} });
+          return FlutterMap(
+            mapController: _map,
+            options: MapOptions(initialCenter: pos, initialZoom: 16),
+            children: [
+              TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.lumachat.app'),
+              MarkerLayer(markers: [Marker(point: pos, width: 40, height: 40, child: const Icon(Icons.location_on, color: Colors.red, size: 40))]),
+              const SimpleAttributionWidget(source: Text('OpenStreetMap contributors')),
+            ],
           );
         },
       ),
