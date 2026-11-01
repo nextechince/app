@@ -22,7 +22,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager/photo_manager.dart' hide LatLng;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
@@ -35,6 +35,9 @@ import '../../services/cloudinary_service.dart';
 // CONFIG: field names in your Firestore `users` documents.
 // Change these if your fields are named differently.
 // ═══════════════════════════════════════════════════════════════════════════
+// Paste your GIPHY API key here (https://developers.giphy.com).
+const String _kGiphyApiKey = '7tXB3cisPGymcszQX85JFOY6kp3Gz47T';
+
 const String _kUserPhoneField = 'phone_number';
 const String _kUserNameField = 'display_name';
 const String _kUserAvatarField = 'avatar_url';
@@ -802,9 +805,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final bg = isDark ? const Color(0xFF17212B) : Colors.white;
     Widget content;
     if (_activePanel == 'sticker') {
-      content = _GiphyPanel(key: const ValueKey('giphy_stickers'), isSticker: true, apiKey: ApiConfig.giphyApiKey, onSelected: _sendSticker);
+      content = _GiphyPanel(key: const ValueKey('giphy_stickers'), isSticker: true, apiKey: _kGiphyApiKey, onSelected: _sendSticker);
     } else if (_activePanel == 'gif') {
-      content = _GiphyPanel(key: const ValueKey('giphy_gifs'), isSticker: false, apiKey: ApiConfig.giphyApiKey, onSelected: _sendGif);
+      content = _GiphyPanel(key: const ValueKey('giphy_gifs'), isSticker: false, apiKey: _kGiphyApiKey, onSelected: _sendGif);
     } else {
       content = EmojiPicker(
         textEditingController: _messageController,
