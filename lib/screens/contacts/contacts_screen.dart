@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
-
-// CORRECT IMPORT FOR intl_phone_pick
-import 'package:intl_phone_pick/international_phone_input.dart';
+import 'package:country_picker/country_picker.dart'; // Stable replacement
 
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
 
@@ -42,7 +39,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // PHONE NORMALIZATION (last 10 digits for comparison)
+  // PHONE NORMALIZATION
   // ═══════════════════════════════════════════════════════════════════════
   String _normalizePhone(String raw) {
     final digits = raw.replaceAll(RegExp(r'[^\d]'), '');
@@ -57,7 +54,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Request permission (read + write)
       final status = await Permission.contacts.request();
       if (status.isDenied || status.isPermanentlyDenied) {
         setState(() {
@@ -67,10 +63,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
         return;
       }
 
-      // 2. Fetch device contacts
       final contacts = await FlutterContacts.getContacts(withProperties: true);
 
-      // 3. Fetch Luma users
       final lumaUsersSnap =
           await FirebaseFirestore.instance.collection('users').get();
       final lumaUsers = lumaUsersSnap.docs
@@ -91,7 +85,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
         final displayName = c.displayName.isNotEmpty ? c.displayName : rawPhone;
 
-        // Match against Luma users with normalized comparison
         final lumaUser = lumaUsers.firstWhere(
           (u) {
             final lumaPhone =
@@ -119,7 +112,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
         }
       }
 
-      // Sort alphabetically
       matched.sort((a, b) => (a['name'] as String)
           .toLowerCase()
           .compareTo((b['name'] as String).toLowerCase()));
@@ -175,7 +167,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
     final phoneCtrl = TextEditingController();
     Country? selectedCountry;
     bool isSaving = false;
-    bool? isOnLuma; // null = unknown, true/false after check
+    bool? isOnLuma;
     bool isChecking = false;
 
     showModalBottomSheet(
@@ -230,7 +222,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                       ),
                       const SizedBox(height: 12),
 
-                      // Country picker + phone input
+                      // Country Picker + Phone Input Row
                       Container(
                         decoration: BoxDecoration(
                           color: isDark
@@ -238,27 +230,73 @@ class _ContactsScreenState extends State<ContactsScreen> {
                               : const Color(0xFFF1F1F1),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        child: InternationalPhoneInput(
-                          controller: phoneCtrl,
-                          initialCountryCode: selectedCountry?.isoCode,
-                          onPhoneNumberChange: (number, formatted, country) async {
-                            selectedCountry = country;
-                            if (number.isEmpty) {
-                              setModalState(() => isOnLuma = null);
-                              return;
-                            }
-                            final fullPhone = '+${country.dialCode}$number';
-                            setModalState(() => isChecking = true);
-                            final result = await _isPhoneOnLuma(fullPhone);
-                            if (mounted) {
-                              setModalState(() {
-                                isOnLuma = result;
-                                isChecking = false;
-                              });
-                            }
-                          },
+                        child: Row(
+                          children: [
+                            // Country Selector Button
+                            InkWell(
+                              onTap: () {
+                                showCountryPicker(
+                                  context: context,
+                                  showPhoneCode: true,
+                                  onSelect: (Country country) {
+                                    setModalState(
+                                        () => selectedCountry = country);
+                                  },
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 16),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      selectedCountry != null
+                                          ? '${selectedCountry!.flagEmoji} +${selectedCountry!.phoneCode}'
+                                          : 'Select',
+                                      style: TextStyle(
+                                        color: selectedCountry != null
+                                            ? theme.colorScheme.onSurface
+                                            : theme.colorScheme.onSurface
+                                                .withOpacity(0.5),
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    const Icon(Icons.arrow_drop_down),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // Phone Number Input
+                            Expanded(
+                              child: TextField(
+                                controller: phoneCtrl,
+                                keyboardType: TextInputType.phone,
+                                onChanged: (val) async {
+                                  if (val.isEmpty || selectedCountry == null) {
+                                    setModalState(() => isOnLuma = null);
+                                    return;
+                                  }
+                                  final fullPhone =
+                                      '+${selectedCountry!.phoneCode}$val';
+                                  setModalState(() => isChecking = true);
+                                  final result =
+                                      await _isPhoneOnLuma(fullPhone);
+                                  if (mounted) {
+                                    setModalState(() {
+                                      isOnLuma = result;
+                                      isChecking = false;
+                                    });
+                                  }
+                                },
+                                decoration: const InputDecoration(
+                                  hintText: 'Phone Number',
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 16),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
 
@@ -271,8 +309,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                             SizedBox(
                               width: 14,
                               height: 14,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                             SizedBox(width: 8),
                             Text('Checking Luma Chat...',
@@ -297,9 +334,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
                                 isOnLuma!
                                     ? Icons.check_circle
                                     : Icons.info_outline,
-                                color: isOnLuma!
-                                    ? Colors.green
-                                    : Colors.orange,
+                                color:
+                                    isOnLuma! ? Colors.green : Colors.orange,
                                 size: 16,
                               ),
                               const SizedBox(width: 6),
@@ -327,84 +363,84 @@ class _ContactsScreenState extends State<ContactsScreen> {
                         width: double.infinity,
                         height: 50,
                         child: ElevatedButton(
-                          onPressed:
-                              (isSaving || isChecking) ? null : () async {
-                            if (phoneCtrl.text.trim().isEmpty ||
-                                selectedCountry == null) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                      'Please enter a phone number'),
-                                ),
-                              );
-                              return;
-                            }
-                            setModalState(() => isSaving = true);
+                          onPressed: (isSaving || isChecking)
+                              ? null
+                              : () async {
+                                  if (phoneCtrl.text.trim().isEmpty ||
+                                      selectedCountry == null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'Please enter a phone number'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  setModalState(() => isSaving = true);
 
-                            try {
-                              final fullPhone =
-                                  '+${selectedCountry!.dialCode}${phoneCtrl.text.trim()}';
-                              final name = nameCtrl.text.trim().isEmpty
-                                  ? fullPhone
-                                  : nameCtrl.text.trim();
+                                  try {
+                                    final fullPhone =
+                                        '+${selectedCountry!.phoneCode}${phoneCtrl.text.trim()}';
+                                    final name = nameCtrl.text.trim().isEmpty
+                                        ? fullPhone
+                                        : nameCtrl.text.trim();
 
-                              // Save to phone's native contacts
-                              try {
-                                final newContact = Contact()
-                                  ..name.first = name
-                                  ..phones = [Phone(fullPhone)];
-                                await newContact.insert(); // CORRECT FLUTTER_CONTACTS METHOD
-                              } catch (e) {
-                                debugPrint('Native contact save error: $e');
-                                // Continue anyway — still save to Firestore
-                              }
+                                    // Save to phone's native contacts
+                                    try {
+                                      final newContact = Contact()
+                                        ..name.first = name
+                                        ..phones = [Phone(fullPhone)];
+                                      await newContact.insert();
+                                    } catch (e) {
+                                      debugPrint(
+                                          'Native contact save error: $e');
+                                    }
 
-                              // Save to Firestore (app contacts)
-                              await FirebaseFirestore.instance
-                                  .collection('users')
-                                  .doc(_currentUserId)
-                                  .collection('contacts')
-                                  .add({
-                                'display_name': name,
-                                'phone_number': fullPhone,
-                                'created_at':
-                                    FieldValue.serverTimestamp(),
-                              });
+                                    // Save to Firestore
+                                    await FirebaseFirestore.instance
+                                        .collection('users')
+                                        .doc(_currentUserId)
+                                        .collection('contacts')
+                                        .add({
+                                      'display_name': name,
+                                      'phone_number': fullPhone,
+                                      'created_at':
+                                          FieldValue.serverTimestamp(),
+                                    });
 
-                              if (!mounted) return;
-                              Navigator.pop(ctx);
+                                    if (!mounted) return;
+                                    Navigator.pop(ctx);
 
-                              // Snackbar auto-dismisses after 5s
-                              ScaffoldMessenger.of(context)
-                                  .showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isOnLuma == true
-                                        ? 'Contact saved — they are on Luma Chat!'
-                                        : 'Contact saved. Invite them to Luma Chat!',
-                                  ),
-                                  duration: const Duration(seconds: 5),
-                                ),
-                              );
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          isOnLuma == true
+                                              ? 'Contact saved — they are on Luma Chat!'
+                                              : 'Contact saved. Invite them to Luma Chat!',
+                                        ),
+                                        duration: const Duration(seconds: 5),
+                                      ),
+                                    );
 
-                              _loadContacts();
-                            } catch (e) {
-                              debugPrint('Save contact error: $e');
-                              if (mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        'Failed to save contact: $e'),
-                                  ),
-                                );
-                              }
-                            } finally {
-                              if (mounted) {
-                                setModalState(() => isSaving = false);
-                              }
-                            }
-                          },
+                                    _loadContacts();
+                                  } catch (e) {
+                                    debugPrint('Save contact error: $e');
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              'Failed to save contact: $e'),
+                                        ),
+                                      );
+                                    }
+                                  } finally {
+                                    if (mounted) {
+                                      setModalState(() => isSaving = false);
+                                    }
+                                  }
+                                },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: theme.colorScheme.primary,
                             foregroundColor: Colors.white,
@@ -511,9 +547,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
         'DOWNLOAD LUMA CHAT ON PLAY STORE AND LET\'S CHAT TOGETHER';
     final encoded = Uri.encodeComponent(message);
 
-    // Android: sms:number?body=...
     final androidUri = Uri.parse('sms:$phone?body=$encoded');
-    // iOS: sms:number&body=...
     final iosUri = Uri.parse('sms:$phone&body=$encoded');
 
     try {
@@ -525,7 +559,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
         await launchUrl(iosUri);
         return;
       }
-      // Fallback: open dialer
       final dialUri = Uri.parse('tel:$phone');
       if (await canLaunchUrl(dialUri)) {
         await launchUrl(dialUri);
