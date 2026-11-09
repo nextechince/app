@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl_phone_pick/intl_phone_pick.dart';
 
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
 
@@ -26,8 +28,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
   @override
   void initState() {
     super.initState();
-    _currentUserId = Provider.of<LumaAuthProvider>(context, listen: false).user?.uid ??
-        Provider.of<LumaAuthProvider>(context, listen: false).mockUserId;
+    final auth = Provider.of<LumaAuthProvider>(context, listen: false);
+    _currentUserId = auth.user?.uid ?? auth.mockUserId;
     _loadContacts();
   }
 
@@ -37,13 +39,25 @@ class _ContactsScreenState extends State<ContactsScreen> {
     super.dispose();
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // PHONE NORMALIZATION (last 10 digits for comparison)
+  // ═══════════════════════════════════════════════════════════════════════
+  String _normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.length > 10) return digits.substring(digits.length - 10);
+    return digits;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOAD CONTACTS
+  // ═══════════════════════════════════════════════════════════════════════
   Future<void> _loadContacts() async {
     setState(() => _isLoading = true);
-    
+
     try {
-      // 1. Ask for permission
+      // 1. Request permission (read + write)
       final status = await Permission.contacts.request();
-      if (status.isDenied) {
+      if (status.isDenied || status.isPermanentlyDenied) {
         setState(() {
           _permissionDenied = true;
           _isLoading = false;
@@ -51,12 +65,15 @@ class _ContactsScreenState extends State<ContactsScreen> {
         return;
       }
 
-      // 2. Fetch phone contacts
+      // 2. Fetch device contacts
       final contacts = await FlutterContacts.getContacts(withProperties: true);
-      
-      // 3. Fetch Luma Users to match
-      final lumaUsersSnap = await FirebaseFirestore.instance.collection('users').get();
-      final lumaUsers = lumaUsersSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+
+      // 3. Fetch Luma users
+      final lumaUsersSnap =
+          await FirebaseFirestore.instance.collection('users').get();
+      final lumaUsers = lumaUsersSnap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList();
 
       final matched = <Map<String, dynamic>>[];
       final invites = <Map<String, dynamic>>[];
@@ -64,16 +81,21 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
       for (final c in contacts) {
         if (c.phones.isEmpty) continue;
-        
-        final phone = c.phones.first.number.replaceAll(RegExp(r'[^\d+]'), '');
-        if (processedNumbers.contains(phone)) continue;
+
+        final rawPhone = c.phones.first.number;
+        final phone = _normalizePhone(rawPhone);
+        if (phone.isEmpty || processedNumbers.contains(phone)) continue;
         processedNumbers.add(phone);
 
-        final displayName = c.displayName ?? phone;
+        final displayName = c.displayName.isNotEmpty ? c.displayName : rawPhone;
 
-        // Find if this phone exists in Luma Chat
+        // Match against Luma users with normalized comparison
         final lumaUser = lumaUsers.firstWhere(
-          (u) => (u['phone_number'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '') == phone,
+          (u) {
+            final lumaPhone =
+                _normalizePhone((u['phone_number'] ?? '').toString());
+            return lumaPhone.isNotEmpty && lumaPhone == phone;
+          },
           orElse: () => {},
         );
 
@@ -81,25 +103,34 @@ class _ContactsScreenState extends State<ContactsScreen> {
           matched.add({
             'id': lumaUser['id'],
             'name': lumaUser['display_name'] ?? displayName,
-            'phone': phone,
+            'phone': rawPhone,
             'avatar_url': lumaUser['avatar_url'],
             'is_on_luma': true,
           });
         } else {
           invites.add({
-            'id': phone,
+            'id': rawPhone,
             'name': displayName,
-            'phone': phone,
+            'phone': rawPhone,
             'is_on_luma': false,
           });
         }
       }
+
+      // Sort alphabetically
+      matched.sort((a, b) => (a['name'] as String)
+          .toLowerCase()
+          .compareTo((b['name'] as String).toLowerCase()));
+      invites.sort((a, b) => (a['name'] as String)
+          .toLowerCase()
+          .compareTo((b['name'] as String).toLowerCase()));
 
       if (mounted) {
         setState(() {
           _lumaContacts = matched;
           _inviteContacts = invites;
           _isLoading = false;
+          _permissionDenied = false;
         });
       }
     } catch (e) {
@@ -109,12 +140,41 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // CHECK IF PHONE IS ON LUMA
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<bool> _isPhoneOnLuma(String fullPhone) async {
+    try {
+      final digits = fullPhone.replaceAll(RegExp(r'[^\d]'), '');
+      final last10 = digits.length > 10
+          ? digits.substring(digits.length - 10)
+          : digits;
+      if (last10.isEmpty) return false;
+
+      final snap =
+          await FirebaseFirestore.instance.collection('users').get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final userPhone =
+            _normalizePhone((data['phone_number'] ?? '').toString());
+        if (userPhone.isNotEmpty && userPhone == last10) return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Luma check error: $e');
+      return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // NEW CONTACT MODAL
   // ═══════════════════════════════════════════════════════════════════════
   void _showNewContactSheet() {
     final nameCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
+    Country? selectedCountry;
     bool isSaving = false;
+    bool? isOnLuma; // null = unknown, true/false after check
+    bool isChecking = false;
 
     showModalBottomSheet(
       context: context,
@@ -125,61 +185,251 @@ class _ContactsScreenState extends State<ContactsScreen> {
         final isDark = theme.brightness == Brightness.dark;
 
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (context, setModalState) {
             return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom),
               child: Container(
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF17212B) : Colors.white,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(24)),
                 ),
                 padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
-                    const SizedBox(height: 16),
-                    Text('New Contact', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
-                    const SizedBox(height: 24),
-                    _buildInputField(theme, 'Contact Name', nameCtrl, Icons.person_outline),
-                    const SizedBox(height: 12),
-                    _buildInputField(theme, 'Phone Number', phoneCtrl, Icons.phone_outlined, keyboardType: TextInputType.phone),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: isSaving ? null : () async {
-                          if (phoneCtrl.text.trim().isEmpty) return;
-                          setState(() => isSaving = true);
-                          
-                          try {
-                            final phone = phoneCtrl.text.trim().replaceAll(RegExp(r'[^\d+]'), '');
-                            final name = nameCtrl.text.trim().isEmpty ? phone : nameCtrl.text.trim();
-                            
-                            // Just save to your app's contacts list
-                            await FirebaseFirestore.instance.collection('users').doc(_currentUserId).collection('contacts').add({
-                              'display_name': name,
-                              'phone_number': phone,
-                              'created_at': FieldValue.serverTimestamp(),
-                            });
-                            
-                            if (!mounted) return;
-                            Navigator.pop(ctx);
-                            _loadContacts();
-                          } finally {
-                            if (mounted) setState(() => isSaving = false);
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                        child: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text('Save Contact'),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      Text(
+                        'New Contact',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Name field
+                      _buildInputField(
+                        theme,
+                        'Contact Name',
+                        nameCtrl,
+                        Icons.person_outline,
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Country picker + phone input
+                      Container(
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? const Color(0xFF242F3D)
+                              : const Color(0xFFF1F1F1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        child: InternationalPhoneInput(
+                          controller: phoneCtrl,
+                          initialCountry: selectedCountry,
+                          onChanged: (country, number) async {
+                            selectedCountry = country;
+                            if (number.isEmpty) {
+                              setModalState(() => isOnLuma = null);
+                              return;
+                            }
+                            final fullPhone =
+                                '+${country.dialCode}$number';
+                            setModalState(() => isChecking = true);
+                            final result =
+                                await _isPhoneOnLuma(fullPhone);
+                            if (mounted) {
+                              setModalState(() {
+                                isOnLuma = result;
+                                isChecking = false;
+                              });
+                            }
+                          },
+                          label: 'Phone Number',
+                          hintText: 'Enter phone number',
+                        ),
+                      ),
+
+                      // Status indicator
+                      if (isChecking) ...[
+                        const SizedBox(height: 12),
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Checking Luma Chat...',
+                                style: TextStyle(fontSize: 12)),
+                          ],
+                        ),
+                      ] else if (isOnLuma != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isOnLuma!
+                                ? Colors.green.withOpacity(0.1)
+                                : Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isOnLuma!
+                                    ? Icons.check_circle
+                                    : Icons.info_outline,
+                                color: isOnLuma!
+                                    ? Colors.green
+                                    : Colors.orange,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  isOnLuma!
+                                      ? 'On Luma Chat'
+                                      : 'Not on Luma — they will receive an invite',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isOnLuma!
+                                        ? Colors.green
+                                        : Colors.orange,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(height: 24),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed:
+                              (isSaving || isChecking) ? null : () async {
+                            if (phoneCtrl.text.trim().isEmpty ||
+                                selectedCountry == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Please enter a phone number'),
+                                ),
+                              );
+                              return;
+                            }
+                            setModalState(() => isSaving = true);
+
+                            try {
+                              final fullPhone =
+                                  '+${selectedCountry!.dialCode}${phoneCtrl.text.trim()}';
+                              final name = nameCtrl.text.trim().isEmpty
+                                  ? fullPhone
+                                  : nameCtrl.text.trim();
+
+                              // Save to phone's native contacts
+                              try {
+                                final newContact = Contact()
+                                  ..displayName = name
+                                  ..phones = [Phone(fullPhone)];
+                                await FlutterContacts.create(newContact);
+                              } catch (e) {
+                                debugPrint(
+                                    'Native contact save error: $e');
+                                // Continue anyway — still save to Firestore
+                              }
+
+                              // Save to Firestore (app contacts)
+                              await FirebaseFirestore.instance
+                                  .collection('users')
+                                  .doc(_currentUserId)
+                                  .collection('contacts')
+                                  .add({
+                                'display_name': name,
+                                'phone_number': fullPhone,
+                                'created_at':
+                                    FieldValue.serverTimestamp(),
+                              });
+
+                              if (!mounted) return;
+                              Navigator.pop(ctx);
+
+                              // Snackbar auto-dismisses after 5s
+                              ScaffoldMessenger.of(context)
+                                  .showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isOnLuma == true
+                                        ? 'Contact saved — they are on Luma Chat!'
+                                        : 'Contact saved. Invite them to Luma Chat!',
+                                  ),
+                                  duration: const Duration(seconds: 5),
+                                ),
+                              );
+
+                              _loadContacts();
+                            } catch (e) {
+                              debugPrint('Save contact error: $e');
+                              if (mounted) {
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                        'Failed to save contact: $e'),
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) {
+                                setModalState(() => isSaving = false);
+                              }
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: theme.colorScheme.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: isSaving
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Save Contact'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -189,23 +439,43 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
-  Widget _buildInputField(ThemeData theme, String hint, TextEditingController ctrl, IconData icon, {TextInputType? keyboardType}) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // INPUT FIELD HELPER
+  // ═══════════════════════════════════════════════════════════════════════
+  Widget _buildInputField(
+    ThemeData theme,
+    String hint,
+    TextEditingController ctrl,
+    IconData icon, {
+    TextInputType? keyboardType,
+  }) {
     final isDark = theme.brightness == Brightness.dark;
     return Container(
-      decoration: BoxDecoration(color: isDark ? const Color(0xFF242F3D) : const Color(0xFFF1F1F1), borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF242F3D) : const Color(0xFFF1F1F1),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: TextField(
         controller: ctrl,
         keyboardType: keyboardType,
         decoration: InputDecoration(
           hintText: hint,
-          prefixIcon: Icon(icon, color: theme.colorScheme.onSurface.withOpacity(0.5), size: 20),
+          prefixIcon: Icon(
+            icon,
+            color: theme.colorScheme.onSurface.withOpacity(0.5),
+            size: 20,
+          ),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
       ),
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // NEW GROUP / CHANNEL SHEET
+  // ═══════════════════════════════════════════════════════════════════════
   void _showNewGroupSheet() {
     showModalBottomSheet(
       context: context,
@@ -235,6 +505,51 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // OPEN SMS APP WITH INVITE MESSAGE
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> _sendSmsInvite(String rawPhone) async {
+    final phone = rawPhone.replaceAll(RegExp(r'[^\d+]'), '');
+    const message =
+        'DOWNLOAD LUMA CHAT ON PLAY STORE AND LET\'S CHAT TOGETHER';
+    final encoded = Uri.encodeComponent(message);
+
+    // Android: sms:number?body=...
+    final androidUri = Uri.parse('sms:$phone?body=$encoded');
+    // iOS: sms:number&body=...
+    final iosUri = Uri.parse('sms:$phone&body=$encoded');
+
+    try {
+      if (await canLaunchUrl(androidUri)) {
+        await launchUrl(androidUri);
+        return;
+      }
+      if (await canLaunchUrl(iosUri)) {
+        await launchUrl(iosUri);
+        return;
+      }
+      // Fallback: open dialer
+      final dialUri = Uri.parse('tel:$phone');
+      if (await canLaunchUrl(dialUri)) {
+        await launchUrl(dialUri);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open SMS app')),
+        );
+      }
+    } catch (e) {
+      debugPrint('SMS launch error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open SMS app: $e')),
+        );
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ═══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -255,8 +570,14 @@ class _ContactsScreenState extends State<ContactsScreen> {
               if (val == 'refresh') _loadContacts();
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'group', child: Text('New Group / Channel')),
-              const PopupMenuItem(value: 'refresh', child: Text('Refresh')),
+              const PopupMenuItem(
+                value: 'group',
+                child: Text('New Group / Channel'),
+              ),
+              const PopupMenuItem(
+                value: 'refresh',
+                child: Text('Refresh'),
+              ),
             ],
           ),
         ],
@@ -268,33 +589,79 @@ class _ContactsScreenState extends State<ContactsScreen> {
             padding: const EdgeInsets.all(16),
             child: TextField(
               controller: _searchController,
-              onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
+              onChanged: (v) =>
+                  setState(() => _searchQuery = v.toLowerCase()),
               decoration: InputDecoration(
                 hintText: 'Search contacts...',
                 prefixIcon: const Icon(Icons.search),
                 filled: true,
                 fillColor: theme.colorScheme.onSurface.withOpacity(0.05),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
-          
+
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _permissionDenied
-                    ? Center(child: TextButton(onPressed: _loadContacts, child: const Text('Grant Permission')))
-                    : ListView(
-                        children: [
-                          if (_lumaContacts.isNotEmpty) ...[
-                            _sectionHeader(theme, 'ON LUMA CHAT'),
-                            ..._lumaContacts.where((c) => c['name'].toLowerCase().contains(_searchQuery)).map((c) => _contactTile(theme, c, true)),
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.lock_outline, size: 48),
+                            const SizedBox(height: 12),
+                            const Text('Contacts permission is required'),
+                            const SizedBox(height: 12),
+                            TextButton(
+                              onPressed: _loadContacts,
+                              child: const Text('Grant Permission'),
+                            ),
                           ],
-                          if (_inviteContacts.isNotEmpty) ...[
-                            _sectionHeader(theme, 'INVITE TO LUMA CHAT'),
-                            ..._inviteContacts.where((c) => c['name'].toLowerCase().contains(_searchQuery)).map((c) => _contactTile(theme, c, false)),
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _loadContacts,
+                        child: ListView(
+                          children: [
+                            if (_lumaContacts.isNotEmpty) ...[
+                              _sectionHeader(theme, 'ON LUMA CHAT'),
+                              ..._lumaContacts
+                                  .where((c) => (c['name'] as String)
+                                      .toLowerCase()
+                                      .contains(_searchQuery))
+                                  .map((c) =>
+                                      _contactTile(theme, c, true)),
+                            ],
+                            if (_inviteContacts.isNotEmpty) ...[
+                              _sectionHeader(
+                                  theme, 'INVITE TO LUMA CHAT'),
+                              ..._inviteContacts
+                                  .where((c) => (c['name'] as String)
+                                      .toLowerCase()
+                                      .contains(_searchQuery))
+                                  .map((c) =>
+                                      _contactTile(theme, c, false)),
+                            ],
+                            if (_lumaContacts.isEmpty &&
+                                _inviteContacts.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Center(
+                                  child: Text(
+                                    'No contacts found',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.5),
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
-                        ],
+                        ),
                       ),
           ),
         ],
@@ -302,31 +669,57 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // SECTION HEADER
+  // ═══════════════════════════════════════════════════════════════════════
   Widget _sectionHeader(ThemeData theme, String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Text(
         title,
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.colorScheme.primary, letterSpacing: 1.1),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: theme.colorScheme.primary,
+          letterSpacing: 1.1,
+        ),
       ),
     );
   }
 
-  Widget _contactTile(ThemeData theme, Map<String, dynamic> contact, bool isOnLuma) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // CONTACT TILE
+  // ═══════════════════════════════════════════════════════════════════════
+  Widget _contactTile(
+      ThemeData theme, Map<String, dynamic> contact, bool isOnLuma) {
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
-        backgroundImage: isOnLuma && contact['avatar_url'] != null ? NetworkImage(contact['avatar_url']) : null,
-        child: !isOnLuma || contact['avatar_url'] == null ? Icon(Icons.person, color: theme.colorScheme.primary) : null,
+        backgroundImage: isOnLuma && contact['avatar_url'] != null
+            ? NetworkImage(contact['avatar_url'])
+            : null,
+        child: !isOnLuma || contact['avatar_url'] == null
+            ? Icon(Icons.person, color: theme.colorScheme.primary)
+            : null,
       ),
       title: Text(contact['name']),
       subtitle: Text(contact['phone']),
       trailing: isOnLuma
           ? const Icon(Icons.chat_bubble_outline, size: 20)
-          : Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(20)),
-              child: const Text('Invite', style: TextStyle(color: Colors.white, fontSize: 12)),
+          : InkWell(
+              onTap: () => _sendSmsInvite(contact['phone']),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'Invite',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
             ),
       onTap: () {
         if (isOnLuma) {
@@ -337,9 +730,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
             'otherUserId': contact['id'],
           });
         } else {
-          // Send invite link
-          final url = 'https://lumachat.app/invite?phone=${contact['phone']}';
-          launchUrl(Uri.parse(url));
+          _sendSmsInvite(contact['phone']);
         }
       },
     );
