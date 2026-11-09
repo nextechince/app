@@ -28,7 +28,7 @@ dependencies:
   # UI & System
   cupertino_icons: ^1.0.8
   image_picker: ^1.1.2
-  intl_phone_pick: ^1.0.1
+  country_picker: ^2.0.20
   google_fonts: ^6.2.1
   cached_network_image: ^3.4.1
   photo_view: ^0.15.0
