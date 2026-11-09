@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:intl_phone_pick/intl_phone_pick.dart';
+
+// CORRECT IMPORT FOR intl_phone_pick
+import 'package:intl_phone_pick/international_phone_input.dart';
 
 import '../../providers/auth_provider.dart' show LumaAuthProvider;
 
@@ -240,18 +242,16 @@ class _ContactsScreenState extends State<ContactsScreen> {
                             horizontal: 8, vertical: 4),
                         child: InternationalPhoneInput(
                           controller: phoneCtrl,
-                          initialCountry: selectedCountry,
-                          onChanged: (country, number) async {
+                          initialCountryCode: selectedCountry?.isoCode,
+                          onPhoneNumberChange: (number, formatted, country) async {
                             selectedCountry = country;
                             if (number.isEmpty) {
                               setModalState(() => isOnLuma = null);
                               return;
                             }
-                            final fullPhone =
-                                '+${country.dialCode}$number';
+                            final fullPhone = '+${country.dialCode}$number';
                             setModalState(() => isChecking = true);
-                            final result =
-                                await _isPhoneOnLuma(fullPhone);
+                            final result = await _isPhoneOnLuma(fullPhone);
                             if (mounted) {
                               setModalState(() {
                                 isOnLuma = result;
@@ -259,8 +259,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
                               });
                             }
                           },
-                          label: 'Phone Number',
-                          hintText: 'Enter phone number',
                         ),
                       ),
 
@@ -353,12 +351,11 @@ class _ContactsScreenState extends State<ContactsScreen> {
                               // Save to phone's native contacts
                               try {
                                 final newContact = Contact()
-                                  ..displayName = name
+                                  ..name.first = name
                                   ..phones = [Phone(fullPhone)];
-                                await FlutterContacts.create(newContact);
+                                await newContact.insert(); // CORRECT FLUTTER_CONTACTS METHOD
                               } catch (e) {
-                                debugPrint(
-                                    'Native contact save error: $e');
+                                debugPrint('Native contact save error: $e');
                                 // Continue anyway — still save to Firestore
                               }
 
