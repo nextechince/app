@@ -33,7 +33,6 @@ import '../../services/cloudinary_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIG: field names in your Firestore `users` documents.
-// Change these if your fields are named differently.
 // ═══════════════════════════════════════════════════════════════════════════
 // Paste your GIPHY API key here (https://developers.giphy.com).
 const String _kGiphyApiKey = '7tXB3cisPGymcszQX85JFOY6kp3Gz47T';
@@ -293,7 +292,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   // ═══════════════════════════════════════════════════════════════════════
   // SENDING
   // ═══════════════════════════════════════════════════════════════════════
-  /// Shared helper used by the new attachment features. Returns the new message id.
   Future<String> _postMessage(Map<String, dynamic> data) async {
     final msgId = const Uuid().v4();
     await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).collection('messages').doc(msgId).set({
@@ -310,7 +308,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    // Check if group is locked
     final isLocked = _chatData?['is_locked'] == true;
     if (isLocked && _myRole != 'admin' && _myRole != 'owner') {
       _showSnack('Text not allowed. Group is locked to admins.');
@@ -366,7 +363,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
   }
 
-  /// Sends the photos / videos selected in the custom gallery grid.
   Future<void> _sendAssets(List<AssetEntity> assets) async {
     final limit = _isMePremium ? (5 * 1024 * 1024 * 1024) : (200 * 1024 * 1024);
     for (var i = 0; i < assets.length; i++) {
@@ -388,11 +384,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
   }
 
-  // Camera (image_picker). Pass closeSheet: true when called from the attachment sheet.
   Future<void> _pickFromCamera({bool closeSheet = false}) async {
     try {
       if (closeSheet) {
-        Navigator.pop(context); // closes the sheet (also releases the live preview camera)
+        Navigator.pop(context);
         await Future.delayed(const Duration(milliseconds: 300));
       }
       final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
@@ -713,8 +708,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // COMPOSER: single rounded pill, mic is a solid circle inside it,
-  // nothing painted behind the pill.
+  // COMPOSER
   // ═══════════════════════════════════════════════════════════════════════
   Widget _buildComposer(ThemeData theme, bool isDark) {
     final isLocked = _chatData?['is_locked'] == true;
@@ -776,11 +770,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       ),
               ),
               SizedBox(width: 44, height: 44, child: IconButton(padding: EdgeInsets.zero, icon: Icon(Icons.attach_file, color: iconColor), onPressed: () => _showAttachmentSheet())),
-              // Camera quick action (shown while there is no text, like Telegram)
               if (!_hasText && canText)
                 SizedBox(width: 44, height: 44, child: IconButton(padding: EdgeInsets.zero, icon: Icon(Icons.camera_alt_outlined, color: iconColor), onPressed: _pickFromCamera)),
               const SizedBox(width: 2),
-              // Sharp solid circle (mic / send)
               GestureDetector(
                 onTap: _hasText ? _sendText : () => _showSnack('Hold to record a voice message'),
                 onLongPress: (canText && !_hasText) ? _startRecording : null,
@@ -875,7 +867,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ATTACHMENT BOTTOM SHEET (Gallery · File · Location · Contact · Music)
+  // ATTACHMENT BOTTOM SHEET
   // ═══════════════════════════════════════════════════════════════════════
   void _showAttachmentSheet() {
     _selectedBottomTab = 0;
@@ -954,7 +946,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
-  // Gallery: camera preview tile + photo/video grid with selection circles
   Widget _buildCustomImagePicker(StateSetter setModalState) {
     return FutureBuilder<List<AssetEntity>>(
       future: _assetsFuture,
@@ -997,7 +988,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Future<void> _uploadAndSendFile(File file, String name) async {
     _showSnack('Uploading File...');
-    final url = await CloudinaryService.uploadFile(file, 'luma/files'); // Ensure this method exists in your CloudinaryService
+    final url = await CloudinaryService.uploadFile(file, 'luma/files');
     if (url != null) {
       if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
       final msgId = const Uuid().v4();
@@ -1024,11 +1015,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    Navigator.pop(context); // close attachment sheet
+    Navigator.pop(context);
     await _uploadAndSendFile(picked, picked.path.split('/').last);
   }
 
-  // File tab
   Widget _buildFilePicker() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
@@ -1047,12 +1037,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // Location tab
   Widget _buildLocationPicker() {
     return _LocationTab(onSendCurrent: _sendCurrentLocation, onShareLive: _startLiveLocation);
   }
 
-  // Contact tab (Luma Chat users only)
   Widget _buildContactsPicker(StateSetter setModalState) {
     _contactsFuture ??= _loadLumaContacts();
     return FutureBuilder<List<_LumaContact>>(
@@ -1117,7 +1105,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // Music tab
   Widget _buildMusicPicker(StateSetter setModalState) {
     _audioFuture ??= _loadAssets(RequestType.audio, size: 200);
     return Column(
@@ -1200,7 +1187,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  // Helper methods for Bottom Sheet
   Widget _buildListTile(IconData icon, Color color, String title, String subtitle, {required VoidCallback onTap}) {
     return ListTile(
       leading: CircleAvatar(backgroundColor: color, child: Icon(icon, color: Colors.white)),
@@ -1210,16 +1196,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  Widget _buildActionTile(IconData icon, Color color, String title, String subtitle, VoidCallback onTap) {
-    return ListTile(
-      leading: CircleAvatar(backgroundColor: color, child: Icon(icon, color: Colors.white)),
-      title: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-      subtitle: Text(subtitle),
-      onTap: onTap,
-    );
-  }
-
-  // Floating tab bar of the attachment sheet
   Widget _buildBottomTabBar(StateSetter setModalState) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
@@ -1277,21 +1253,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  Widget _attachTile(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(width: 56, height: 56, decoration: const BoxDecoration(color: Color(0xFF3390EC), shape: BoxShape.circle), child: Icon(icon, color: Colors.white, size: 26)),
-          const SizedBox(height: 8),
-          Text(label, style: const TextStyle(fontSize: 12))
-        ]
-      )
-    );
-  }
-
-  // Header circle (each header button is its own separate circle)
   Widget _headerCircle({required IconData icon, required VoidCallback onTap}) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -1568,9 +1529,6 @@ class _ImageViewerScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(backgroundColor: Colors.black, appBar: AppBar(backgroundColor: Colors.black, leading: IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context))), body: Center(child: Image.file(File(imagePath))));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// LIVE CAMERA PREVIEW TILE (first tile of the gallery grid)
-// ═══════════════════════════════════════════════════════════════════════════
 class _CameraPreviewTile extends StatefulWidget {
   final VoidCallback onTap;
   const _CameraPreviewTile({required this.onTap});
@@ -1597,9 +1555,7 @@ class _CameraPreviewTileState extends State<_CameraPreviewTile> {
       await c.initialize();
       if (!mounted) { c.dispose(); return; }
       setState(() => _controller = c);
-    } catch (_) {
-      // Preview is optional; tapping the tile still opens the camera.
-    }
+    } catch (_) {}
   }
 
   @override
@@ -1631,12 +1587,9 @@ class _CameraPreviewTileState extends State<_CameraPreviewTile> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GALLERY GRID TILE
-// ═══════════════════════════════════════════════════════════════════════════
 class _AssetThumb extends StatefulWidget {
   final AssetEntity entity;
-  final int selectedIndex; // -1 when not selected
+  final int selectedIndex;
   final VoidCallback onTap;
   const _AssetThumb({super.key, required this.entity, required this.selectedIndex, required this.onTap});
 
@@ -1691,9 +1644,6 @@ class _AssetThumbState extends State<_AssetThumb> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// LOCATION TAB (Google map + send current / share live)
-// ═══════════════════════════════════════════════════════════════════════════
 class _LocationTab extends StatefulWidget {
   final void Function(Position) onSendCurrent;
   final void Function(Position, Duration) onShareLive;
@@ -1803,9 +1753,6 @@ class _LocationTabState extends State<_LocationTab> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FULL-SCREEN LOCATION VIEWER (follows live location updates)
-// ═══════════════════════════════════════════════════════════════════════════
 class _LocationViewerScreen extends StatefulWidget {
   final String chatId;
   final String msgId;
@@ -1848,10 +1795,6 @@ class _LocationViewerScreenState extends State<_LocationViewerScreen> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GIPHY PANEL (GIFs and Stickers) via the GIPHY REST API
-// Requires: static const String giphyApiKey = '...'; in ApiConfig
-// ═══════════════════════════════════════════════════════════════════════════
 class _GiphyItem {
   final String preview;
   final String full;
